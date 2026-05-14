@@ -6,23 +6,23 @@ interface Props {
 
 export function ResponseView({ response }: Props) {
   const isOk = response.status >= 200 && response.status < 400;
-  const codeClass = isOk ? "code-ok" : "code-err";
-
+  const codeClass = isOk ? "ok" : "err";
   const pretty = formatBody(response);
 
   return (
     <>
       <div className="status">
-        <span className={codeClass}>{response.status}</span>{" "}
+        <span className={`code ${codeClass}`}>{response.status}</span>
         <span style={{ color: "var(--text-dim)" }}>
-          {response.method} {response.url} · {response.elapsedMs} ms
+          {response.method} {response.url}
+        </span>
+        <span style={{ color: "var(--text-faint)", marginLeft: 8 }}>
+          {response.elapsedMs} ms
         </span>
       </div>
       <details>
-        <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--text-dim)" }}>
-          Headers ({response.headers.length})
-        </summary>
-        <pre style={{ marginTop: 8 }}>
+        <summary>Headers · {response.headers.length}</summary>
+        <pre>
           {response.headers.map(([k, v]) => `${k}: ${v}`).join("\n")}
         </pre>
       </details>
@@ -32,8 +32,8 @@ export function ResponseView({ response }: Props) {
 }
 
 function formatBody(response: ResponseDto): string {
-  const contentType = response.headers
-    .find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
+  const contentType =
+    response.headers.find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
   if (contentType.includes("application/json")) {
     try {
       return JSON.stringify(JSON.parse(response.body), null, 2);
