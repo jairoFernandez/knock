@@ -1,0 +1,17 @@
+[package]
+name = "knock-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "knock"
+path = "src/main.rs"
+
+[dependencies]
+knock-core = { path = "../knock-core" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
