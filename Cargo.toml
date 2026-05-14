@@ -19,3 +19,5 @@ regex = "1"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "2", features = ["serde"] }
 serde_json = "1"
+base64 = "0.22"
+dirs = "5"

@@ -1,5 +1,6 @@
 export interface WorkspaceInfo {
   root: string;
+  name: string | null;
   activeEnv: string | null;
 }
 
@@ -24,5 +25,34 @@ export interface ResponseDto {
   method: string;
   elapsedMs: number;
   headers: [string, string][];
-  body: string;
+  bodyBase64: string;
 }
+
+export interface KV {
+  key: string;
+  value: string;
+}
+
+export type BodyForm =
+  | { kind: "none" }
+  | { kind: "text"; text: string }
+  | { kind: "json"; json: string }
+  | { kind: "file"; path: string };
+
+export interface RequestForm {
+  name: string | null;
+  method: string;
+  url: string;
+  uses: string[];
+  headers: KV[];
+  query: KV[];
+  body: BodyForm;
+}
+
+export interface RecentEntry {
+  root: string;
+  name: string | null;
+  lastOpened: number;
+}
+
+

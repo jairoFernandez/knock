@@ -1,5 +1,6 @@
-use knock_core::{execute, init_at, resolve, Workspace};
-use serde::Serialize;
+use indexmap::IndexMap;
+use knock_core::{execute, init_at, parser, resolve, Workspace};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -7,6 +8,7 @@ use std::sync::OnceLock;
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfo {
     pub root: String,
+    pub name: Option<String>,
     pub active_env: Option<String>,
 }
 
@@ -19,6 +21,39 @@ pub struct TreeEntry {
     pub name: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct KvDto {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BodyDto {
+    None,
+    Text { text: String },
+    Json { json: String },
+    File { path: String },
+}
+
+impl Default for BodyDto {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestFormDto {
+    pub name: Option<String>,
+    pub method: String,
+    pub url: String,
+    pub uses: Vec<String>,
+    pub headers: Vec<KvDto>,
+    pub query: Vec<KvDto>,
+    pub body: BodyDto,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseDto {
@@ -27,11 +62,70 @@ pub struct ResponseDto {
     pub method: String,
     pub elapsed_ms: u128,
     pub headers: Vec<(String, String)>,
-    pub body: String,
+    pub body_base64: String,
 }
 
 fn to_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
+}
+
+#[tauri::command]
+pub fn create_entry(root: String, kind: String, rel: String) -> Result<String, String> {
+    let trimmed = rel.trim().trim_start_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Err("path cannot be empty".into());
+    }
+    if trimmed.contains("..") {
+        return Err("path cannot contain ..".into());
+    }
+    let (subdir, template): (&str, String) = match kind.as_str() {
+        "request" => (
+            "requests",
+            "name = \"\"\nmethod = \"GET\"\nurl = \"{{base_url}}/\"\n".into(),
+        ),
+        "fragment" => ("fragments", "[headers]\n".into()),
+        "flow" => (
+            "flows",
+            "name = \"\"\n\n[[steps]]\nname = \"step-1\"\nrequest = \"\"\n\n[steps.expect]\nstatus = 200\n".into(),
+        ),
+        "environment" => ("environments", "# env vars\nbase_url = \"\"\n".into()),
+        other => return Err(format!("unknown kind '{other}'")),
+    };
+
+    let with_ext = if trimmed.ends_with(".toml") {
+        trimmed
+    } else {
+        format!("{trimmed}.toml")
+    };
+    let rel_full = format!("{subdir}/{with_ext}");
+    let path = safe_join(&root, &rel_full)?;
+    if path.exists() {
+        return Err(format!("{rel_full} already exists"));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(to_err)?;
+    }
+    std::fs::write(&path, template).map_err(to_err)?;
+    Ok(rel_full)
+}
+
+#[tauri::command]
+pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
+    let path = safe_join(&root, &rel)?;
+    if !path.is_file() {
+        return Err("not a file".into());
+    }
+    std::fs::remove_file(&path).map_err(to_err)
+}
+
+#[tauri::command]
+pub fn list_recents() -> Vec<crate::recents::RecentEntry> {
+    crate::recents::list()
+}
+
+#[tauri::command]
+pub fn forget_recent(root: String) -> Result<(), String> {
+    crate::recents::forget(&root).map_err(to_err)
 }
 
 #[tauri::command]
@@ -44,8 +138,11 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
     }
     let root = init_at(Path::new(&parent), &name, git).map_err(to_err)?;
     let workspace = Workspace::load(root).map_err(to_err)?;
+    let root_str = workspace.root.display().to_string();
+    let _ = crate::recents::remember(&root_str);
     Ok(WorkspaceInfo {
-        root: workspace.root.display().to_string(),
+        root: root_str,
+        name: workspace.config.name.clone(),
         active_env: workspace
             .active_env()
             .or(workspace.config.default_env.clone()),
@@ -55,8 +152,11 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
 #[tauri::command]
 pub fn open_workspace(path: String) -> Result<WorkspaceInfo, String> {
     let workspace = Workspace::discover(Path::new(&path)).map_err(to_err)?;
+    let root_str = workspace.root.display().to_string();
+    let _ = crate::recents::remember(&root_str);
     Ok(WorkspaceInfo {
-        root: workspace.root.display().to_string(),
+        root: root_str,
+        name: workspace.config.name.clone(),
         active_env: workspace
             .active_env()
             .or(workspace.config.default_env.clone()),
@@ -188,6 +288,178 @@ fn walk(base: &Path, dir: &Path, files: &mut Vec<String>) -> std::io::Result<()>
 }
 
 #[tauri::command]
+pub fn parse_request_form(root: String, rel: String) -> Result<RequestFormDto, String> {
+    let path = safe_join(&root, &rel)?;
+    let request = parser::parse_request(&path).map_err(to_err)?;
+    Ok(request_to_form(request))
+}
+
+#[tauri::command]
+pub fn save_request_form(root: String, rel: String, form: RequestFormDto) -> Result<(), String> {
+    let path = safe_join(&root, &rel)?;
+    let toml = emit_request_toml(&form)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(to_err)?;
+    }
+    std::fs::write(&path, toml).map_err(to_err)
+}
+
+#[tauri::command]
+pub fn get_env_vars(root: String, name: String) -> Result<Vec<KvDto>, String> {
+    let workspace = Workspace::load(PathBuf::from(&root)).map_err(to_err)?;
+    let Some(env_path) = workspace.environment_path(&name) else {
+        return Ok(Vec::new());
+    };
+    let env = parser::parse_environment(&env_path).map_err(to_err)?;
+    Ok(env
+        .vars
+        .into_iter()
+        .map(|(key, value)| KvDto { key, value })
+        .collect())
+}
+
+fn request_to_form(r: knock_core::Request) -> RequestFormDto {
+    let body = match r.body {
+        None => BodyDto::None,
+        Some(b) => {
+            if let Some(json) = b.json {
+                let json_val: serde_json::Value =
+                    serde_json::to_value(&json).unwrap_or(serde_json::Value::Null);
+                let json_str = serde_json::to_string_pretty(&json_val).unwrap_or_default();
+                BodyDto::Json { json: json_str }
+            } else if let Some(text) = b.text {
+                BodyDto::Text { text }
+            } else if let Some(file) = b.file {
+                BodyDto::File { path: file }
+            } else {
+                BodyDto::None
+            }
+        }
+    };
+    RequestFormDto {
+        name: r.name,
+        method: r.method,
+        url: r.url,
+        uses: r.uses,
+        headers: r
+            .headers
+            .into_iter()
+            .map(|(key, value)| KvDto { key, value })
+            .collect(),
+        query: r
+            .query
+            .into_iter()
+            .map(|(key, value)| KvDto { key, value })
+            .collect(),
+        body,
+    }
+}
+
+#[derive(Serialize)]
+struct TomlBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json: Option<toml::Value>,
+}
+
+#[derive(Serialize)]
+struct TomlRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    method: &'a str,
+    url: &'a str,
+    #[serde(rename = "use", skip_serializing_if = "<[_]>::is_empty")]
+    uses: &'a [String],
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    query: IndexMap<String, String>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    headers: IndexMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<TomlBody<'a>>,
+}
+
+fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
+    let headers: IndexMap<String, String> = form
+        .headers
+        .iter()
+        .filter(|kv| !kv.key.is_empty())
+        .map(|kv| (kv.key.clone(), kv.value.clone()))
+        .collect();
+    let query: IndexMap<String, String> = form
+        .query
+        .iter()
+        .filter(|kv| !kv.key.is_empty())
+        .map(|kv| (kv.key.clone(), kv.value.clone()))
+        .collect();
+
+    let body = match &form.body {
+        BodyDto::None => None,
+        BodyDto::Text { text } => Some(TomlBody {
+            text: Some(text.as_str()),
+            file: None,
+            json: None,
+        }),
+        BodyDto::File { path } => Some(TomlBody {
+            text: None,
+            file: Some(path.as_str()),
+            json: None,
+        }),
+        BodyDto::Json { json } => {
+            let value: serde_json::Value = serde_json::from_str(json)
+                .map_err(|e| format!("body.json: invalid JSON: {e}"))?;
+            let toml_val = json_to_toml(&value);
+            Some(TomlBody {
+                text: None,
+                file: None,
+                json: Some(toml_val),
+            })
+        }
+    };
+
+    let req = TomlRequest {
+        name: form.name.as_deref().filter(|s| !s.is_empty()),
+        method: &form.method,
+        url: &form.url,
+        uses: &form.uses,
+        query,
+        headers,
+        body,
+    };
+
+    toml::to_string_pretty(&req).map_err(to_err)
+}
+
+fn json_to_toml(v: &serde_json::Value) -> toml::Value {
+    match v {
+        serde_json::Value::Null => toml::Value::String(String::new()),
+        serde_json::Value::Bool(b) => toml::Value::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml::Value::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                toml::Value::Float(f)
+            } else {
+                toml::Value::String(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => toml::Value::String(s.clone()),
+        serde_json::Value::Array(arr) => {
+            toml::Value::Array(arr.iter().map(json_to_toml).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            let mut table = toml::value::Table::new();
+            for (k, v) in obj {
+                table.insert(k.clone(), json_to_toml(v));
+            }
+            toml::Value::Table(table)
+        }
+    }
+}
+
+#[tauri::command]
 pub fn read_file(root: String, rel: String) -> Result<String, String> {
     let path = safe_join(&root, &rel)?;
     std::fs::read_to_string(&path).map_err(to_err)
@@ -215,14 +487,17 @@ pub async fn run_request(
         .or(workspace.config.default_env.clone());
     let resolved = resolve(&workspace, &path, env_name.as_deref()).map_err(to_err)?;
     let response = execute(&resolved).await.map_err(to_err)?;
-    let body = response.body_string();
+    let body_base64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &response.body,
+    );
     Ok(ResponseDto {
         status: response.status,
         url: resolved.url,
         method: resolved.method,
         elapsed_ms: response.elapsed.as_millis(),
         headers: response.headers.into_iter().collect(),
-        body,
+        body_base64,
     })
 }
 
