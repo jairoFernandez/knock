@@ -71,7 +71,7 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
             value={form.url}
             onChange={(url) => onChange({ ...form, url })}
             vars={vars}
-            placeholder="https://api.example.com/{{path}}"
+            placeholder="https://api.example.com/users  (or {{base_url}}/users)"
             monospace
           />
         </div>

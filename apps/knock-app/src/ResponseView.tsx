@@ -4,6 +4,28 @@ import { statusClass, statusText } from "./statusText";
 
 interface Props {
   response: ResponseDto;
+  history?: { response: ResponseDto; at: number }[];
+  activeIdx?: number;
+  activeAt?: number | null;
+  onSelectRun?: (idx: number) => void;
+  onClearHistory?: () => void;
+}
+
+function timeAgo(ms: number): string {
+  const diff = Math.floor((Date.now() - ms) / 1000);
+  if (diff < 5) return "now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function shortStatusClass(code: number): string {
+  if (code >= 200 && code < 300) return "ok";
+  if (code >= 300 && code < 400) return "redirect";
+  if (code >= 400 && code < 500) return "client-err";
+  if (code >= 500) return "server-err";
+  return "neutral";
 }
 
 type Tab = "body" | "headers" | "info";
@@ -44,7 +66,14 @@ function isText(ct: string): boolean {
   );
 }
 
-export function ResponseView({ response }: Props) {
+export function ResponseView({
+  response,
+  history = [],
+  activeIdx = 0,
+  activeAt = null,
+  onSelectRun,
+  onClearHistory,
+}: Props) {
   const [tab, setTab] = useState<Tab>("body");
   const [viewMode, setViewMode] = useState<"auto" | "text" | "raw">("auto");
   const contentType = useMemo(
@@ -58,8 +87,40 @@ export function ResponseView({ response }: Props) {
       <div className="resp-statusline">
         <span className={`resp-code ${statusClass(response.status)}`}>{response.status}</span>
         <span className="resp-text">{statusText(response.status)}</span>
-        <span className="resp-meta">{response.elapsedMs} ms · {size}</span>
+        <span className="resp-meta">
+          {response.elapsedMs} ms · {size}
+          {activeAt !== null && history.length > 1 && (
+            <span className="resp-when"> · {timeAgo(activeAt)}</span>
+          )}
+        </span>
       </div>
+
+      {history.length > 1 && (
+        <div className="resp-history">
+          <span className="resp-history-label">History</span>
+          <div className="resp-history-list">
+            {history.map((run, idx) => (
+              <button
+                key={idx}
+                className={`resp-history-chip ${idx === activeIdx ? "active" : ""} ${shortStatusClass(run.response.status)}`}
+                onClick={() => onSelectRun?.(idx)}
+                title={`Run #${idx + 1} · ${run.response.status} · ${new Date(run.at).toLocaleTimeString()}`}
+              >
+                {run.response.status}
+              </button>
+            ))}
+          </div>
+          {onClearHistory && (
+            <button
+              className="resp-history-clear"
+              onClick={onClearHistory}
+              title="Clear history"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="tab-strip">
         <button className={tab === "body" ? "tab active" : "tab"} onClick={() => setTab("body")}>

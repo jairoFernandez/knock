@@ -386,13 +386,28 @@ button.primary:hover:not(:disabled) {
 }
 .tree-item.dir {
   color: var(--text-dim);
-  cursor: default;
   font-size: 11px;
   text-transform: lowercase;
   letter-spacing: 0.5px;
-  padding-top: 8px;
+  padding-top: 6px;
+  padding-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
 }
-.tree-item.dir .dir-glyph { color: var(--text-faint); }
+.tree-item.dir:hover { color: var(--text); }
+.tree-item.dir .dir-glyph {
+  color: var(--text-faint);
+  width: 12px;
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.1s;
+}
+.tree-item.dir .dir-count {
+  margin-left: auto;
+  padding-right: 12px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
 .tree-item.file:hover { background: var(--panel-2); }
 .tree-item.file.selected { background: var(--panel-3); color: var(--text); }
 .tree-item.file.selected::before {
@@ -875,6 +890,59 @@ textarea {
 .resp-code.neutral { background: var(--panel-3); color: var(--text-dim); }
 .resp-text { color: var(--text); }
 .resp-meta { color: var(--text-faint); margin-left: auto; }
+.resp-when { color: var(--text-faint); }
+
+.resp-history {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.resp-history-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+}
+.resp-history-list {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  overflow-x: auto;
+}
+.resp-history-chip {
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  min-width: 38px;
+}
+.resp-history-chip.ok { color: #9ce28f; }
+.resp-history-chip.redirect { color: #e9bb73; }
+.resp-history-chip.client-err { color: #f0939f; }
+.resp-history-chip.server-err { color: #ffabad; }
+.resp-history-chip:hover { border-color: var(--accent); }
+.resp-history-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.resp-history-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 2px 6px;
+}
+.resp-history-clear:hover { color: var(--err); }
 .resp-tab-body { padding: 0; }
 .resp-tab-body pre {
   margin: 0;

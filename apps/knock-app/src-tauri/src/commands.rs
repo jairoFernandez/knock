@@ -81,14 +81,14 @@ pub fn create_entry(root: String, kind: String, rel: String) -> Result<String, S
     let (subdir, template): (&str, String) = match kind.as_str() {
         "request" => (
             "requests",
-            "name = \"\"\nmethod = \"GET\"\nurl = \"{{base_url}}/\"\n".into(),
+            "name = \"\"\nmethod = \"GET\"\nurl = \"\"\n".into(),
         ),
         "fragment" => ("fragments", "[headers]\n".into()),
         "flow" => (
             "flows",
             "name = \"\"\n\n[[steps]]\nname = \"step-1\"\nrequest = \"\"\n\n[steps.expect]\nstatus = 200\n".into(),
         ),
-        "environment" => ("environments", "# env vars\nbase_url = \"\"\n".into()),
+        "environment" => ("environments", "# env vars\n".into()),
         other => return Err(format!("unknown kind '{other}'")),
     };
 
@@ -98,7 +98,11 @@ pub fn create_entry(root: String, kind: String, rel: String) -> Result<String, S
         format!("{trimmed}.toml")
     };
     let rel_full = format!("{subdir}/{with_ext}");
-    let path = safe_join(&root, &rel_full)?;
+
+    let root_path = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace root: {e}"))?;
+    let path = root_path.join(&rel_full);
     if path.exists() {
         return Err(format!("{rel_full} already exists"));
     }

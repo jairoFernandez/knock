@@ -29,7 +29,8 @@ export function App() {
   const [rawContent, setRawContent] = useState<string>("");
   const [rawDirty, setRawDirty] = useState(false);
   const [rawSavedAt, setRawSavedAt] = useState<number | null>(null);
-  const [response, setResponse] = useState<ResponseDto | null>(null);
+  const [runs, setRuns] = useState<Record<string, { response: ResponseDto; at: number }[]>>({});
+  const [viewIdx, setViewIdx] = useState<Record<string, number>>({});
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -45,7 +46,8 @@ export function App() {
     setSelected(null);
     setForm(null);
     setRawContent("");
-    setResponse(null);
+    setRuns({});
+    setViewIdx({});
     setError(null);
     try {
       const [list, envList] = await Promise.all([
@@ -159,14 +161,12 @@ export function App() {
     if (!workspace || !selected || !form) return;
     setRunning(true);
     setError(null);
-    setResponse(null);
     try {
       await invoke("save_request_form", {
         root: workspace.root,
         rel: selected,
         form,
       });
-      // env vars may have been edited externally — refresh
       if (workspace.activeEnv) {
         await refreshEnvVars(workspace.root, workspace.activeEnv);
       }
@@ -175,7 +175,16 @@ export function App() {
         rel: selected,
         env: workspace.activeEnv ?? null,
       });
-      setResponse(result);
+      const key = selected;
+      setRuns((r) => {
+        const next = [...(r[key] ?? []), { response: result, at: Date.now() }].slice(-20);
+        return { ...r, [key]: next };
+      });
+      setViewIdx((v) => {
+        const next = { ...v };
+        delete next[key];
+        return next;
+      });
       const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
       setEntries(list);
     } catch (e) {
@@ -184,6 +193,13 @@ export function App() {
       setRunning(false);
     }
   }
+
+  const currentRuns = selected ? runs[selected] ?? [] : [];
+  const currentIdx = selected
+    ? viewIdx[selected] ?? Math.max(currentRuns.length - 1, 0)
+    : 0;
+  const currentResponse = currentRuns[currentIdx]?.response ?? null;
+  const currentRunAt = currentRuns[currentIdx]?.at ?? null;
 
   if (!workspace) {
     return (
@@ -230,7 +246,8 @@ export function App() {
             setWorkspace(null);
             setSelected(null);
             setForm(null);
-            setResponse(null);
+            setRuns({});
+            setViewIdx({});
             setError(null);
           }}
           title="Back to dashboard"
@@ -335,12 +352,36 @@ export function App() {
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
         {error && <div className="error">{error}</div>}
-        {!error && !response && (
+        {!error && !currentResponse && (
           <div className="empty">
             {isRequest ? "Hit Send to fire the request." : "Open a request to send it."}
           </div>
         )}
-        {response && <ResponseView response={response} />}
+        {currentResponse && (
+          <ResponseView
+            response={currentResponse}
+            history={currentRuns}
+            activeIdx={currentIdx}
+            activeAt={currentRunAt}
+            onSelectRun={(idx) => {
+              if (!selected) return;
+              setViewIdx((v) => ({ ...v, [selected]: idx }));
+            }}
+            onClearHistory={() => {
+              if (!selected) return;
+              setRuns((r) => {
+                const next = { ...r };
+                delete next[selected];
+                return next;
+              });
+              setViewIdx((v) => {
+                const next = { ...v };
+                delete next[selected];
+                return next;
+              });
+            }}
+          />
+        )}
       </div>
 
       {showNew && (

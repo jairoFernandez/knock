@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { EntryKind, TreeEntry } from "./types";
 
 interface TreeProps {
@@ -66,24 +67,26 @@ function kindIcon(kind: EntryKind | undefined): string {
   }
 }
 
-function renderNode(
-  node: Node,
-  depth: number,
-  selected: string | null,
-  onSelect: (p: string) => void,
-): JSX.Element[] {
+interface RenderState {
+  selected: string | null;
+  collapsed: Set<string>;
+  toggle: (path: string) => void;
+  onSelect: (path: string) => void;
+}
+
+function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[] {
   const items: JSX.Element[] = [];
   for (const child of node.children) {
-    const pad = { paddingLeft: 10 + depth * 14 };
+    const pad = { paddingLeft: 8 + depth * 12 };
     if (child.entry) {
       const e = child.entry;
-      const label = e.kind === "request" ? (e.name ?? child.name.replace(/\.toml$/, "")) : child.name;
+      const label = e.kind === "request" ? e.name ?? child.name.replace(/\.toml$/, "") : child.name;
       items.push(
         <div
           key={child.path}
-          className={`tree-item file${selected === child.path ? " selected" : ""}`}
+          className={`tree-item file${state.selected === child.path ? " selected" : ""}`}
           style={pad}
-          onClick={() => onSelect(child.path)}
+          onClick={() => state.onSelect(child.path)}
           title={child.path}
         >
           {e.kind === "request" ? (
@@ -97,19 +100,52 @@ function renderNode(
         </div>,
       );
     } else {
+      const isCollapsed = state.collapsed.has(child.path);
       items.push(
-        <div key={child.path} className="tree-item dir" style={pad}>
-          <span className="dir-glyph">▸</span>
+        <div
+          key={child.path}
+          className="tree-item dir"
+          style={pad}
+          onClick={() => state.toggle(child.path)}
+        >
+          <span className={`dir-glyph ${isCollapsed ? "collapsed" : "open"}`}>
+            {isCollapsed ? "▸" : "▾"}
+          </span>
           <span className="tree-label">{child.name}</span>
+          <span className="dir-count">{countFiles(child)}</span>
         </div>,
       );
-      items.push(...renderNode(child, depth + 1, selected, onSelect));
+      if (!isCollapsed) {
+        items.push(...renderNode(child, depth + 1, state));
+      }
     }
   }
   return items;
 }
 
+function countFiles(node: Node): number {
+  let n = 0;
+  for (const c of node.children) {
+    if (c.entry) n++;
+    else n += countFiles(c);
+  }
+  return n;
+}
+
 export function Tree({ entries, selected, onSelect }: TreeProps) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (path: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
   const root = buildTree(entries);
-  return <div className="tree">{renderNode(root, 0, selected, onSelect)}</div>;
+  return (
+    <div className="tree">
+      {renderNode(root, 0, { selected, collapsed, toggle, onSelect })}
+    </div>
+  );
 }
