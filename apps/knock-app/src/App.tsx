@@ -305,7 +305,29 @@ export function App() {
           </button>
         </div>
         {!workspace && <div className="empty">Open or create a workspace.</div>}
-        {workspace && <Tree entries={entries} selected={selected} onSelect={setSelected} />}
+        {workspace && (
+          <Tree
+            entries={entries}
+            selected={selected}
+            onSelect={setSelected}
+            onDelete={async (path) => {
+              if (!workspace) return;
+              if (!confirm(`Delete ${path}?`)) return;
+              try {
+                await invoke("delete_entry", { root: workspace.root, rel: path });
+                const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
+                setEntries(list);
+                if (selected === path) {
+                  setSelected(null);
+                  setForm(null);
+                  setRawContent("");
+                }
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+          />
+        )}
       </div>
 
       <div className="panel editor-panel">

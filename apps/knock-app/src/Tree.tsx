@@ -5,6 +5,7 @@ interface TreeProps {
   entries: TreeEntry[];
   selected: string | null;
   onSelect: (path: string) => void;
+  onDelete?: (path: string) => void;
 }
 
 interface Node {
@@ -72,6 +73,7 @@ interface RenderState {
   collapsed: Set<string>;
   toggle: (path: string) => void;
   onSelect: (path: string) => void;
+  onDelete?: (path: string) => void;
 }
 
 function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[] {
@@ -97,6 +99,18 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
             <span className="kind-glyph">{kindIcon(e.kind)}</span>
           )}
           <span className="tree-label">{label}</span>
+          {state.onDelete && (
+            <button
+              className="tree-delete"
+              title="Delete"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                state.onDelete!(child.path);
+              }}
+            >
+              ×
+            </button>
+          )}
         </div>,
       );
     } else {
@@ -132,7 +146,7 @@ function countFiles(node: Node): number {
   return n;
 }
 
-export function Tree({ entries, selected, onSelect }: TreeProps) {
+export function Tree({ entries, selected, onSelect, onDelete }: TreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (path: string) => {
     setCollapsed((prev) => {
@@ -145,7 +159,7 @@ export function Tree({ entries, selected, onSelect }: TreeProps) {
   const root = buildTree(entries);
   return (
     <div className="tree">
-      {renderNode(root, 0, { selected, collapsed, toggle, onSelect })}
+      {renderNode(root, 0, { selected, collapsed, toggle, onSelect, onDelete })}
     </div>
   );
 }

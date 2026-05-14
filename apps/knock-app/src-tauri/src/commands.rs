@@ -70,7 +70,12 @@ fn to_err<E: std::fmt::Display>(e: E) -> String {
 }
 
 #[tauri::command]
-pub fn create_entry(root: String, kind: String, rel: String) -> Result<String, String> {
+pub fn create_entry(
+    root: String,
+    kind: String,
+    rel: String,
+    url: Option<String>,
+) -> Result<String, String> {
     let trimmed = rel.trim().trim_start_matches('/').to_string();
     if trimmed.is_empty() {
         return Err("path cannot be empty".into());
@@ -78,10 +83,11 @@ pub fn create_entry(root: String, kind: String, rel: String) -> Result<String, S
     if trimmed.contains("..") {
         return Err("path cannot contain ..".into());
     }
+    let url_value = url.as_deref().unwrap_or("").replace('"', "\\\"");
     let (subdir, template): (&str, String) = match kind.as_str() {
         "request" => (
             "requests",
-            "name = \"\"\nmethod = \"GET\"\nurl = \"\"\n".into(),
+            format!("name = \"\"\nmethod = \"GET\"\nurl = \"{url_value}\"\n"),
         ),
         "fragment" => ("fragments", "[headers]\n".into()),
         "flow" => (

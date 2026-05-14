@@ -420,6 +420,25 @@ button.primary:hover:not(:disabled) {
 }
 .tree-item.file { position: relative; }
 .kind-glyph { color: var(--text-faint); width: 36px; text-align: center; font-size: 12px; }
+.tree-delete {
+  margin-left: auto;
+  margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tree-item.file:hover .tree-delete { opacity: 1; }
+.tree-delete:hover { background: rgba(227, 101, 114, 0.18); color: var(--err); }
 
 /* ---------- method chips ---------- */
 .method-chip {
@@ -1081,6 +1100,14 @@ textarea {
   text-transform: none;
   letter-spacing: 0;
   font-family: var(--mono);
+}
+.modal-label-faint {
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  font-family: var(--mono);
+  margin-left: 6px;
 }
 .kind-row {
   display: flex;
