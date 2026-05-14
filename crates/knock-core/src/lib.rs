@@ -14,4 +14,4 @@ pub use model::{
 };
 pub use resolver::resolve;
 pub use runner::execute;
-pub use workspace::Workspace;
+pub use workspace::{init_at, Workspace};

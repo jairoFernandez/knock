@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use knock_core::{execute, resolve, run_flow, Workspace};
+use knock_core::{execute, init_at, resolve, run_flow, Workspace};
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "knock", version, about = "Modular HTTP client with git-native workspaces")]
@@ -177,44 +176,8 @@ async fn flow(name: &str, env_override: Option<&str>) -> Result<()> {
 }
 
 fn init(name: &str, no_git: bool) -> Result<()> {
-    let root = std::env::current_dir()?.join(name);
-    if root.exists() {
-        anyhow::bail!("path {} already exists", root.display());
-    }
-    std::fs::create_dir_all(root.join("environments"))?;
-    std::fs::create_dir_all(root.join("fragments"))?;
-    std::fs::create_dir_all(root.join("requests"))?;
-    std::fs::create_dir_all(root.join("flows"))?;
-
-    std::fs::write(
-        root.join("knock.toml"),
-        format!("name = \"{name}\"\n# default_env = \"local\"\n"),
-    )?;
-    std::fs::write(
-        root.join(".gitignore"),
-        "/.knock/\n*.local.toml\n",
-    )?;
-    std::fs::write(
-        root.join("environments").join("local.toml"),
-        "# environment variables for local development\nbase_url = \"https://httpbin.org\"\n",
-    )?;
-    std::fs::write(
-        root.join("requests").join("ping.toml"),
-        "name = \"ping\"\nmethod = \"GET\"\nurl = \"{{base_url}}/get\"\n",
-    )?;
-
-    if !no_git {
-        let status = Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .current_dir(&root)
-            .status()
-            .context("running `git init`")?;
-        if !status.success() {
-            anyhow::bail!("git init failed");
-        }
-    }
-
+    let parent = std::env::current_dir()?;
+    let root = init_at(&parent, name, !no_git)?;
     println!("Initialized knock workspace at {}", root.display());
     println!("Next: cd {name} && knock env use local && knock run requests/ping.toml");
     Ok(())

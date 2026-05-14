@@ -9,6 +9,48 @@ pub enum WorkspaceError {
     Io(#[from] std::io::Error),
     #[error("invalid knock.toml: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("path {0} already exists")]
+    AlreadyExists(PathBuf),
+    #[error("git init failed")]
+    GitInit,
+}
+
+pub fn init_at(parent: &Path, name: &str, with_git: bool) -> Result<PathBuf, WorkspaceError> {
+    let root = parent.join(name);
+    if root.exists() {
+        return Err(WorkspaceError::AlreadyExists(root));
+    }
+    std::fs::create_dir_all(root.join("environments"))?;
+    std::fs::create_dir_all(root.join("fragments"))?;
+    std::fs::create_dir_all(root.join("requests"))?;
+    std::fs::create_dir_all(root.join("flows"))?;
+
+    std::fs::write(
+        root.join("knock.toml"),
+        format!("name = \"{name}\"\ndefault_env = \"local\"\n"),
+    )?;
+    std::fs::write(root.join(".gitignore"), "/.knock/\n*.local.toml\n")?;
+    std::fs::write(
+        root.join("environments").join("local.toml"),
+        "# environment variables for local development\nbase_url = \"https://httpbin.org\"\n",
+    )?;
+    std::fs::write(
+        root.join("requests").join("ping.toml"),
+        "name = \"ping\"\nmethod = \"GET\"\nurl = \"{{base_url}}/get\"\n",
+    )?;
+
+    if with_git {
+        let status = std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .current_dir(&root)
+            .status()?;
+        if !status.success() {
+            return Err(WorkspaceError::GitInit);
+        }
+    }
+
+    Ok(root)
 }
 
 #[derive(Debug, Clone)]
