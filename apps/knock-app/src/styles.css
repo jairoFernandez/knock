@@ -294,6 +294,51 @@ body {
   color: var(--text-faint);
   font-weight: 600;
 }
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+}
+.sidebar-add {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-add:hover {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--border);
+}
+.raw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 6px 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.raw-header .dirty-mark { color: var(--accent); margin-left: 2px; }
+.raw-actions { display: flex; align-items: center; gap: 10px; }
+.raw-actions .primary { padding: 4px 12px; font-size: 11px; }
+.raw-saved {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ok);
+}
 
 /* ---------- buttons ---------- */
 button {
@@ -578,42 +623,53 @@ button.primary:hover:not(:disabled) {
 .tmpl-input-overlay > * { pointer-events: auto; }
 .tmpl-text { white-space: pre; }
 .tmpl-var {
-  display: inline-block;
-  padding: 0 4px;
-  margin: 0 1px;
-  border-radius: 3px;
-  font-family: var(--mono);
-  cursor: help;
-  background: rgba(139, 108, 255, 0.18);
-  color: #b9a4ff;
-  border: 1px solid rgba(139, 108, 255, 0.35);
-  line-height: 1.1;
+  background-color: rgba(139, 108, 255, 0.22);
+  color: #c2afff;
+  border-radius: 2px;
+  box-shadow: 0 -1px 0 rgba(139, 108, 255, 0.5) inset;
 }
 .tmpl-var.undefined {
-  background: rgba(227, 101, 114, 0.16);
+  background-color: rgba(227, 101, 114, 0.20);
   color: #f0939f;
-  border-color: rgba(227, 101, 114, 0.35);
+  box-shadow: 0 -1px 0 rgba(227, 101, 114, 0.5) inset;
 }
-.tmpl-tooltip {
-  position: fixed;
-  transform: translate(-50%, -100%);
+
+.tmpl-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  z-index: 30;
   background: var(--panel-3);
   border: 1px solid var(--border-strong);
-  padding: 6px 10px;
   border-radius: 4px;
-  font-size: 11px;
+  padding: 6px 0;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  min-width: 240px;
+  max-width: 480px;
   font-family: var(--mono);
-  z-index: 100;
-  pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  font-size: 11px;
+}
+.tmpl-popover-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 12px;
   white-space: nowrap;
-  max-width: 320px;
+}
+.tmpl-popover-row:hover { background: var(--panel-2); }
+.tmpl-popover-name {
+  color: #c2afff;
+  flex-shrink: 0;
+}
+.tmpl-popover-value {
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tmpl-tooltip-name { color: var(--text-faint); margin-right: 8px; }
-.tmpl-tooltip-value { color: var(--text); }
-.tmpl-tooltip-missing { color: var(--err); font-style: italic; }
+.tmpl-popover-missing {
+  color: var(--err);
+  font-style: italic;
+}
 
 /* ---------- tab strip ---------- */
 .tab-strip {
@@ -950,6 +1006,35 @@ textarea {
   align-items: center;
 }
 .modal .row.right { justify-content: flex-end; margin-top: 8px; }
+.modal-hint {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--mono);
+}
+.kind-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.kind-pill {
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 4px 12px;
+  font-size: 11px;
+  border-radius: 14px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.kind-pill:hover { color: var(--text); }
+.kind-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 
 /* ---------- scrollbar ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

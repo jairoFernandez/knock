@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 interface Props {
   value: string;
@@ -15,8 +15,6 @@ interface Token {
   type: "text" | "var";
   text: string;
   name?: string;
-  start: number;
-  end: number;
 }
 
 function tokenize(value: string): Token[] {
@@ -26,29 +24,29 @@ function tokenize(value: string): Token[] {
   let m: RegExpExecArray | null;
   while ((m = VAR_RE.exec(value)) !== null) {
     if (m.index > last) {
-      tokens.push({ type: "text", text: value.slice(last, m.index), start: last, end: m.index });
+      tokens.push({ type: "text", text: value.slice(last, m.index) });
     }
-    tokens.push({
-      type: "var",
-      text: m[0],
-      name: m[1],
-      start: m.index,
-      end: m.index + m[0].length,
-    });
+    tokens.push({ type: "var", text: m[0], name: m[1] });
     last = m.index + m[0].length;
   }
   if (last < value.length) {
-    tokens.push({ type: "text", text: value.slice(last), start: last, end: value.length });
+    tokens.push({ type: "text", text: value.slice(last) });
   }
   return tokens;
 }
 
-export function TemplatedInput({ value, onChange, vars, placeholder, className, monospace }: Props) {
+export function TemplatedInput({
+  value,
+  onChange,
+  vars,
+  placeholder,
+  className,
+  monospace,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const [tooltip, setTooltip] = useState<{ name: string; value: string | undefined; x: number; y: number } | null>(null);
+  const [focused, setFocused] = useState(false);
 
-  // Keep overlay scroll synced with input scroll
   useLayoutEffect(() => {
     const input = inputRef.current;
     const overlay = overlayRef.current;
@@ -67,6 +65,19 @@ export function TemplatedInput({ value, onChange, vars, placeholder, className, 
   }, [value]);
 
   const tokens = tokenize(value);
+  const usedVars = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { name: string; value: string | undefined }[] = [];
+    VAR_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = VAR_RE.exec(value)) !== null) {
+      if (!seen.has(m[1])) {
+        seen.add(m[1]);
+        out.push({ name: m[1], value: vars[m[1]] });
+      }
+    }
+    return out;
+  }, [value, vars]);
 
   return (
     <div className={`tmpl-input ${monospace ? "mono" : ""} ${className ?? ""}`}>
@@ -75,50 +86,42 @@ export function TemplatedInput({ value, onChange, vars, placeholder, className, 
         className="tmpl-input-real"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 120)}
         placeholder={placeholder}
         spellCheck={false}
         autoCorrect="off"
         autoCapitalize="off"
-        onMouseLeave={() => setTooltip(null)}
       />
       <div className="tmpl-input-overlay" ref={overlayRef} aria-hidden>
-        {tokens.length === 0 && (
-          <span className="tmpl-text">{value || "​"}</span>
-        )}
+        {tokens.length === 0 && <span className="tmpl-text">{value || "​"}</span>}
         {tokens.map((tok, i) =>
           tok.type === "var" ? (
             <span
               key={i}
               className={`tmpl-var ${vars[tok.name!] !== undefined ? "defined" : "undefined"}`}
-              onMouseEnter={(e) => {
-                const rect = (e.target as HTMLElement).getBoundingClientRect();
-                setTooltip({
-                  name: tok.name!,
-                  value: vars[tok.name!],
-                  x: rect.left + rect.width / 2,
-                  y: rect.top,
-                });
-              }}
-              onMouseLeave={() => setTooltip(null)}
             >
               {tok.text}
             </span>
           ) : (
-            <span key={i} className="tmpl-text">{tok.text}</span>
+            <span key={i} className="tmpl-text">
+              {tok.text}
+            </span>
           ),
         )}
       </div>
-      {tooltip && (
-        <div
-          className="tmpl-tooltip"
-          style={{ left: tooltip.x, top: tooltip.y - 8 }}
-        >
-          <span className="tmpl-tooltip-name">{tooltip.name}</span>
-          {tooltip.value !== undefined ? (
-            <span className="tmpl-tooltip-value">{tooltip.value}</span>
-          ) : (
-            <span className="tmpl-tooltip-missing">not defined in env</span>
-          )}
+      {focused && usedVars.length > 0 && (
+        <div className="tmpl-popover" onMouseDown={(e) => e.preventDefault()}>
+          {usedVars.map((v) => (
+            <div className="tmpl-popover-row" key={v.name}>
+              <span className="tmpl-popover-name">{`{{${v.name}}}`}</span>
+              {v.value !== undefined ? (
+                <span className="tmpl-popover-value">{v.value}</span>
+              ) : (
+                <span className="tmpl-popover-missing">not in env</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

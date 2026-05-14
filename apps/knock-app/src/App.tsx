@@ -6,6 +6,7 @@ import { Tree } from "./Tree";
 import { Editor } from "./Editor";
 import { ResponseView } from "./ResponseView";
 import { NewWorkspaceModal } from "./NewWorkspaceModal";
+import { NewEntryModal } from "./NewEntryModal";
 import { RequestEditor } from "./RequestEditor";
 import { Dashboard } from "./Dashboard";
 import type {
@@ -26,10 +27,13 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState<RequestForm | null>(null);
   const [rawContent, setRawContent] = useState<string>("");
+  const [rawDirty, setRawDirty] = useState(false);
+  const [rawSavedAt, setRawSavedAt] = useState<number | null>(null);
   const [response, setResponse] = useState<ResponseDto | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [showNewEntry, setShowNewEntry] = useState(false);
 
   const varsRecord = useMemo(() => {
     const r: Record<string, string> = {};
@@ -118,11 +122,38 @@ export function App() {
       setRawContent("");
     } else {
       invoke<string>("read_file", { root: workspace.root, rel: selected })
-        .then(setRawContent)
+        .then((content) => {
+          setRawContent(content);
+          setRawDirty(false);
+          setRawSavedAt(null);
+        })
         .catch((e) => setError(String(e)));
       setForm(null);
     }
   }, [workspace, selected, isRequest]);
+
+  async function saveRaw() {
+    if (!workspace || !selected) return;
+    try {
+      await invoke("write_file", {
+        root: workspace.root,
+        rel: selected,
+        content: rawContent,
+      });
+      setRawDirty(false);
+      setRawSavedAt(Date.now());
+      // if we just saved the active env, refresh its vars
+      if (
+        workspace.activeEnv &&
+        (selected === `environments/${workspace.activeEnv}.toml` ||
+          selected === `environments/${workspace.activeEnv}.local.toml`)
+      ) {
+        await refreshEnvVars(workspace.root, workspace.activeEnv);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   async function runRequest() {
     if (!workspace || !selected || !form) return;
@@ -135,13 +166,16 @@ export function App() {
         rel: selected,
         form,
       });
+      // env vars may have been edited externally — refresh
+      if (workspace.activeEnv) {
+        await refreshEnvVars(workspace.root, workspace.activeEnv);
+      }
       const result = await invoke<ResponseDto>("run_request", {
         root: workspace.root,
         rel: selected,
         env: workspace.activeEnv ?? null,
       });
       setResponse(result);
-      // refresh tree in case method/name changed
       const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
       setEntries(list);
     } catch (e) {
@@ -243,7 +277,16 @@ export function App() {
       </div>
 
       <div className="panel sidebar">
-        <div className="panel-header">Workspace</div>
+        <div className="panel-header sidebar-header">
+          <span>Workspace</span>
+          <button
+            className="sidebar-add"
+            title="New request / fragment / flow / environment"
+            onClick={() => setShowNewEntry(true)}
+          >
+            +
+          </button>
+        </div>
         {!workspace && <div className="empty">Open or create a workspace.</div>}
         {workspace && <Tree entries={entries} selected={selected} onSelect={setSelected} />}
       </div>
@@ -261,8 +304,30 @@ export function App() {
         )}
         {selected && !isRequest && (
           <>
-            <div className="panel-header">{selected}</div>
-            <Editor value={rawContent} onChange={setRawContent} />
+            <div className="panel-header raw-header">
+              <span>{selected}{rawDirty && <span className="dirty-mark"> •</span>}</span>
+              <div className="raw-actions">
+                {rawSavedAt && !rawDirty && (
+                  <span className="raw-saved">saved</span>
+                )}
+                <button
+                  className="primary"
+                  onClick={saveRaw}
+                  disabled={!rawDirty}
+                  title="Save (Ctrl+S)"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+            <Editor
+              value={rawContent}
+              onChange={(v) => {
+                setRawContent(v);
+                setRawDirty(true);
+              }}
+              onSave={saveRaw}
+            />
           </>
         )}
       </div>
@@ -284,6 +349,23 @@ export function App() {
           onCreated={async (info) => {
             setShowNew(false);
             await loadWorkspace(info);
+          }}
+        />
+      )}
+
+      {showNewEntry && workspace && (
+        <NewEntryModal
+          root={workspace.root}
+          onCancel={() => setShowNewEntry(false)}
+          onCreated={async (rel) => {
+            setShowNewEntry(false);
+            try {
+              const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
+              setEntries(list);
+              setSelected(rel);
+            } catch (e) {
+              setError(String(e));
+            }
           }}
         />
       )}
