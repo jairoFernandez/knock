@@ -9,6 +9,9 @@ import { NewWorkspaceModal } from "./NewWorkspaceModal";
 import { NewEntryModal } from "./NewEntryModal";
 import { RequestEditor } from "./RequestEditor";
 import { Dashboard } from "./Dashboard";
+import { Rail, type RailMode } from "./Rail";
+import { FileBrowser } from "./FileBrowser";
+import { GitPanel } from "./GitPanel";
 import type {
   KV,
   RequestForm,
@@ -35,6 +38,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showNewEntry, setShowNewEntry] = useState(false);
+  const [railMode, setRailMode] = useState<RailMode>("workspace");
+  const [filesRefreshToken, setFilesRefreshToken] = useState(0);
 
   const varsRecord = useMemo(() => {
     const r: Record<string, string> = {};
@@ -293,40 +298,63 @@ export function App() {
         </div>
       </div>
 
+      <Rail mode={railMode} onChange={setRailMode} />
+
       <div className="panel sidebar">
-        <div className="panel-header sidebar-header">
-          <span>Workspace</span>
-          <button
-            className="sidebar-add"
-            title="New request / fragment / flow / environment"
-            onClick={() => setShowNewEntry(true)}
-          >
-            +
-          </button>
-        </div>
-        {!workspace && <div className="empty">Open or create a workspace.</div>}
-        {workspace && (
-          <Tree
-            entries={entries}
-            selected={selected}
-            onSelect={setSelected}
-            onDelete={async (path) => {
-              if (!workspace) return;
-              if (!confirm(`Delete ${path}?`)) return;
-              try {
-                await invoke("delete_entry", { root: workspace.root, rel: path });
-                const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
-                setEntries(list);
-                if (selected === path) {
-                  setSelected(null);
-                  setForm(null);
-                  setRawContent("");
-                }
-              } catch (e) {
-                setError(String(e));
-              }
-            }}
-          />
+        {railMode === "workspace" && (
+          <>
+            <div className="panel-header sidebar-header">
+              <span>Workspace</span>
+              <button
+                className="sidebar-add"
+                title="New request / fragment / flow / environment"
+                onClick={() => setShowNewEntry(true)}
+              >
+                +
+              </button>
+            </div>
+            {workspace && (
+              <Tree
+                entries={entries}
+                selected={selected}
+                onSelect={setSelected}
+                onDelete={async (path) => {
+                  if (!workspace) return;
+                  if (!confirm(`Delete ${path}?`)) return;
+                  try {
+                    await invoke("delete_entry", { root: workspace.root, rel: path });
+                    const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
+                    setEntries(list);
+                    setFilesRefreshToken((t) => t + 1);
+                    if (selected === path) {
+                      setSelected(null);
+                      setForm(null);
+                      setRawContent("");
+                    }
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+              />
+            )}
+          </>
+        )}
+        {railMode === "files" && workspace && (
+          <>
+            <div className="panel-header">Files</div>
+            <FileBrowser
+              root={workspace.root}
+              selected={selected}
+              onSelect={setSelected}
+              refreshToken={filesRefreshToken}
+            />
+          </>
+        )}
+        {railMode === "git" && workspace && (
+          <>
+            <div className="panel-header">Git</div>
+            <GitPanel root={workspace.root} />
+          </>
         )}
       </div>
 

@@ -55,4 +55,24 @@ export interface RecentEntry {
   lastOpened: number;
 }
 
+export interface FileEntry {
+  rel: string;
+  size: number;
+  isText: boolean;
+}
+
+export interface CommitDto {
+  hash: string;
+  short: string;
+  author: string;
+  date: number;
+  subject: string;
+}
+
+export interface FileChangeDto {
+  status: string;
+  path: string;
+}
+
+
 

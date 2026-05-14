@@ -21,6 +21,11 @@ pub fn run() {
             commands::forget_recent,
             commands::create_entry,
             commands::delete_entry,
+            commands::list_files,
+            commands::git_log,
+            commands::git_show_files,
+            commands::git_diff,
+            commands::git_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

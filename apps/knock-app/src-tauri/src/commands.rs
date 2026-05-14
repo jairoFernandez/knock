@@ -69,12 +69,166 @@ fn to_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub rel: String,
+    pub size: u64,
+    pub is_text: bool,
+}
+
+#[tauri::command]
+pub fn list_files(root: String) -> Result<Vec<FileEntry>, String> {
+    let root_path = PathBuf::from(&root);
+    let mut out = Vec::new();
+    walk_all(&root_path, &root_path, &mut out).map_err(to_err)?;
+    out.sort_by(|a, b| a.rel.cmp(&b.rel));
+    Ok(out)
+}
+
+fn walk_all(base: &Path, dir: &Path, out: &mut Vec<FileEntry>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().into_owned();
+        if path.is_dir() {
+            if matches!(
+                name_str.as_str(),
+                ".git" | ".knock" | "target" | "node_modules" | ".idea" | ".vscode"
+            ) {
+                continue;
+            }
+            walk_all(base, &path, out)?;
+        } else if path.is_file() {
+            let metadata = entry.metadata()?;
+            let rel = path
+                .strip_prefix(base)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            out.push(FileEntry {
+                rel,
+                size: metadata.len(),
+                is_text: looks_text(&path),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn looks_text(path: &Path) -> bool {
+    match path.extension().and_then(|s| s.to_str()).map(str::to_lowercase) {
+        Some(ext) => matches!(
+            ext.as_str(),
+            "toml" | "json" | "md" | "txt" | "yaml" | "yml" | "ini" | "cfg" | "conf"
+                | "log" | "csv" | "xml" | "html" | "css" | "js" | "ts" | "tsx" | "jsx"
+                | "sh" | "rs" | "go" | "py" | "rb" | "java" | "kt" | "swift" | "sql"
+                | "env" | "gitignore" | "gitattributes" | "editorconfig"
+        ),
+        None => {
+            // files without extension: try to peek
+            std::fs::metadata(path)
+                .map(|m| m.len() < 1024 * 1024)
+                .unwrap_or(false)
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDto {
+    pub hash: String,
+    pub short: String,
+    pub author: String,
+    pub date: i64,
+    pub subject: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChangeDto {
+    pub status: String,
+    pub path: String,
+}
+
+fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("git command failed: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).into_owned();
+        return Err(if err.is_empty() {
+            format!("git exited with {}", output.status)
+        } else {
+            err.trim().to_string()
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[tauri::command]
+pub fn git_log(root: String, limit: Option<u32>) -> Result<Vec<CommitDto>, String> {
+    let limit = limit.unwrap_or(40).min(500);
+    let fmt = "--pretty=format:%H%x09%h%x09%an%x09%at%x09%s";
+    let out = run_git(
+        &root,
+        &["log", &format!("-n{limit}"), fmt],
+    )?;
+    let mut commits = Vec::new();
+    for line in out.lines() {
+        let mut parts = line.splitn(5, '\t');
+        let hash = parts.next().unwrap_or("").to_string();
+        let short = parts.next().unwrap_or("").to_string();
+        let author = parts.next().unwrap_or("").to_string();
+        let date = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+        let subject = parts.next().unwrap_or("").to_string();
+        if !hash.is_empty() {
+            commits.push(CommitDto { hash, short, author, date, subject });
+        }
+    }
+    Ok(commits)
+}
+
+#[tauri::command]
+pub fn git_show_files(root: String, hash: String) -> Result<Vec<FileChangeDto>, String> {
+    let out = run_git(
+        &root,
+        &["show", "--name-status", "--pretty=", &hash],
+    )?;
+    let mut changes = Vec::new();
+    for line in out.lines() {
+        let mut parts = line.split('\t');
+        let status = parts.next().unwrap_or("").to_string();
+        let path = parts.collect::<Vec<_>>().join(" ");
+        if !path.is_empty() {
+            changes.push(FileChangeDto { status, path });
+        }
+    }
+    Ok(changes)
+}
+
+#[tauri::command]
+pub fn git_diff(root: String, hash: String, path: String) -> Result<String, String> {
+    run_git(&root, &["show", "--format=", &hash, "--", &path])
+}
+
+#[tauri::command]
+pub fn git_status(root: String) -> Result<bool, String> {
+    let exists = std::path::Path::new(&root).join(".git").exists();
+    Ok(exists)
+}
+
 #[tauri::command]
 pub fn create_entry(
     root: String,
     kind: String,
     rel: String,
     url: Option<String>,
+    method: Option<String>,
+    name: Option<String>,
 ) -> Result<String, String> {
     let trimmed = rel.trim().trim_start_matches('/').to_string();
     if trimmed.is_empty() {
@@ -84,10 +238,18 @@ pub fn create_entry(
         return Err("path cannot contain ..".into());
     }
     let url_value = url.as_deref().unwrap_or("").replace('"', "\\\"");
+    let method_value = method
+        .as_deref()
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "GET".to_string());
+    let name_value = name.as_deref().unwrap_or("").replace('"', "\\\"");
     let (subdir, template): (&str, String) = match kind.as_str() {
         "request" => (
             "requests",
-            format!("name = \"\"\nmethod = \"GET\"\nurl = \"{url_value}\"\n"),
+            format!(
+                "name = \"{name_value}\"\nmethod = \"{method_value}\"\nurl = \"{url_value}\"\n"
+            ),
         ),
         "fragment" => ("fragments", "[headers]\n".into()),
         "flow" => (

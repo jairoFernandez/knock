@@ -30,7 +30,13 @@ function isIdSegment(s: string): boolean {
   return ID_RE.test(s);
 }
 
-function deriveFromUrl(raw: string, method: string): { path: string; host: string } | null {
+interface UrlDerivation {
+  path: string;
+  host: string;
+  name: string;
+}
+
+function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   let candidate = trimmed;
@@ -44,20 +50,26 @@ function deriveFromUrl(raw: string, method: string): { path: string; host: strin
     return null;
   }
   const host = u.host;
-  const segments = u.pathname.split("/").filter(Boolean).map(sanitizeSegment);
+  const rawSegments = u.pathname.split("/").filter(Boolean);
+  const segments = rawSegments.map(sanitizeSegment);
   const verb = method.toLowerCase();
 
   if (segments.length === 0) {
-    return { path: `${host}/${verb}`, host };
+    return { path: `${host}/${verb}`, host, name: "/" };
   }
   const last = segments[segments.length - 1];
+  const lastRaw = rawSegments[rawSegments.length - 1];
   if (isIdSegment(last)) {
     const folders = segments.slice(0, -1).join("/");
     const folderPart = folders ? `${folders}/` : "";
-    return { path: `${host}/${folderPart}${last}`, host };
+    return {
+      path: `${host}/${folderPart}${last}`,
+      host,
+      name: `/${lastRaw}`,
+    };
   }
   const folders = segments.join("/");
-  return { path: `${host}/${folders}/${verb}`, host };
+  return { path: `${host}/${folders}/${verb}`, host, name: "/" };
 }
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -74,12 +86,13 @@ export function NewEntryModal({ root, initialKind = "request", onCreated, onCanc
   const config = KINDS.find((k) => k.value === kind)!;
   const isRequest = kind === "request";
 
+  const derivation = isRequest ? deriveFromUrl(url, method) : null;
+
   useEffect(() => {
     if (!isRequest) return;
     if (pathEdited) return;
-    const derived = deriveFromUrl(url, method);
-    setPath(derived?.path ?? "");
-  }, [url, method, isRequest, pathEdited]);
+    setPath(derivation?.path ?? "");
+  }, [derivation?.path, isRequest, pathEdited]);
 
   async function create() {
     setError(null);
@@ -93,6 +106,7 @@ export function NewEntryModal({ root, initialKind = "request", onCreated, onCanc
         rel: finalPath,
         url: isRequest && url.trim() ? url.trim() : null,
         method: isRequest ? method : null,
+        name: isRequest ? derivation?.name ?? null : null,
       });
       onCreated(rel);
     } catch (e) {
@@ -125,19 +139,33 @@ export function NewEntryModal({ root, initialKind = "request", onCreated, onCanc
         {isRequest && (
           <label>
             URL <span className="modal-label-faint">(optional — auto-derives path)</span>
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value);
-                setPathEdited(false);
-              }}
-              placeholder="https://fakestoreapi.com/products/1"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") create();
-              }}
-            />
+            <div className="modal-url-row">
+              <select
+                className="modal-method-select"
+                value={method}
+                onChange={(e) => {
+                  setMethod(e.target.value);
+                  setPathEdited(false);
+                }}
+              >
+                {METHODS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setPathEdited(false);
+                }}
+                placeholder="https://fakestoreapi.com/products/1"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") create();
+                }}
+              />
+            </div>
           </label>
         )}
 
