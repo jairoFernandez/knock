@@ -21,11 +21,21 @@ pub fn run() {
             commands::forget_recent,
             commands::create_entry,
             commands::delete_entry,
+            commands::rename_entry,
+            commands::create_folder,
+            commands::list_directories,
+            commands::get_colors,
+            commands::set_color,
             commands::list_files,
             commands::git_log,
             commands::git_show_files,
             commands::git_diff,
             commands::git_status,
+            commands::git_state,
+            commands::git_stage,
+            commands::git_unstage,
+            commands::git_stage_all,
+            commands::git_commit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

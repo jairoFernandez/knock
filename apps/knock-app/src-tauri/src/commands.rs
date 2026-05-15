@@ -171,6 +171,10 @@ fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
 
 #[tauri::command]
 pub fn git_log(root: String, limit: Option<u32>) -> Result<Vec<CommitDto>, String> {
+    // If there are no commits yet, git log errors. Return empty.
+    if run_git(&root, &["rev-parse", "HEAD"]).is_err() {
+        return Ok(Vec::new());
+    }
     let limit = limit.unwrap_or(40).min(500);
     let fmt = "--pretty=format:%H%x09%h%x09%an%x09%at%x09%s";
     let out = run_git(
@@ -219,6 +223,93 @@ pub fn git_diff(root: String, hash: String, path: String) -> Result<String, Stri
 pub fn git_status(root: String) -> Result<bool, String> {
     let exists = std::path::Path::new(&root).join(".git").exists();
     Ok(exists)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingChangeDto {
+    pub path: String,
+    pub staged: String,
+    pub unstaged: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStateDto {
+    pub branch: String,
+    pub has_commits: bool,
+    pub changes: Vec<WorkingChangeDto>,
+    pub staged_count: usize,
+    pub unstaged_count: usize,
+}
+
+#[tauri::command]
+pub fn git_state(root: String) -> Result<GitStateDto, String> {
+    let branch = run_git(&root, &["symbolic-ref", "--short", "HEAD"])
+        .or_else(|_| run_git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "(detached)".into());
+    let has_commits = run_git(&root, &["rev-parse", "HEAD"]).is_ok();
+    let porcelain = run_git(&root, &["status", "--porcelain"]).unwrap_or_default();
+    let mut changes = Vec::new();
+    let mut staged_count = 0usize;
+    let mut unstaged_count = 0usize;
+    for line in porcelain.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let s = (bytes[0] as char).to_string();
+        let u = (bytes[1] as char).to_string();
+        let path = line[3..].to_string();
+        if s != " " && s != "?" {
+            staged_count += 1;
+        }
+        if u != " " {
+            unstaged_count += 1;
+        }
+        changes.push(WorkingChangeDto {
+            path,
+            staged: s,
+            unstaged: u,
+        });
+    }
+    Ok(GitStateDto {
+        branch,
+        has_commits,
+        changes,
+        staged_count,
+        unstaged_count,
+    })
+}
+
+#[tauri::command]
+pub fn git_stage(root: String, paths: Vec<String>) -> Result<(), String> {
+    let mut args: Vec<String> = vec!["add".into(), "--".into()];
+    args.extend(paths);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(&root, &refs).map(|_| ())
+}
+
+#[tauri::command]
+pub fn git_unstage(root: String, paths: Vec<String>) -> Result<(), String> {
+    let mut args: Vec<String> = vec!["reset".into(), "--".into()];
+    args.extend(paths);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(&root, &refs).map(|_| ())
+}
+
+#[tauri::command]
+pub fn git_stage_all(root: String) -> Result<(), String> {
+    run_git(&root, &["add", "-A"]).map(|_| ())
+}
+
+#[tauri::command]
+pub fn git_commit(root: String, message: String) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("commit message cannot be empty".into());
+    }
+    run_git(&root, &["commit", "-m", &message]).map(|_| ())
 }
 
 #[tauri::command]
@@ -288,6 +379,142 @@ pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
         return Err("not a file".into());
     }
     std::fs::remove_file(&path).map_err(to_err)
+}
+
+#[tauri::command]
+pub fn rename_entry(root: String, old_rel: String, new_rel: String) -> Result<String, String> {
+    let old_trimmed = old_rel.trim().trim_start_matches('/').to_string();
+    let new_trimmed = new_rel.trim().trim_start_matches('/').to_string();
+    if new_trimmed.is_empty() {
+        return Err("new path cannot be empty".into());
+    }
+    if new_trimmed.contains("..") {
+        return Err("path cannot contain ..".into());
+    }
+
+    let root_path = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace root: {e}"))?;
+    let old_path = root_path.join(&old_trimmed);
+    let new_path = root_path.join(&new_trimmed);
+
+    if !old_path.exists() {
+        return Err(format!("{old_trimmed} not found"));
+    }
+    if new_path.exists() {
+        return Err(format!("{new_trimmed} already exists"));
+    }
+    if let Some(parent) = new_path.parent() {
+        std::fs::create_dir_all(parent).map_err(to_err)?;
+    }
+    std::fs::rename(&old_path, &new_path).map_err(to_err)?;
+    Ok(new_trimmed)
+}
+
+#[tauri::command]
+pub fn create_folder(root: String, kind: String, rel: String) -> Result<String, String> {
+    let trimmed = rel.trim().trim_start_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Err("path cannot be empty".into());
+    }
+    if trimmed.contains("..") {
+        return Err("path cannot contain ..".into());
+    }
+    let subdir = match kind.as_str() {
+        "request" => "requests",
+        "fragment" => "fragments",
+        "flow" => "flows",
+        "environment" => "environments",
+        other => return Err(format!("unknown kind '{other}'")),
+    };
+    let rel_full = format!("{subdir}/{trimmed}");
+    let root_path = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace root: {e}"))?;
+    let dir_path = root_path.join(&rel_full);
+    std::fs::create_dir_all(&dir_path).map_err(to_err)?;
+    // .gitkeep so the folder survives in git
+    let keep = dir_path.join(".gitkeep");
+    if !keep.exists() {
+        std::fs::write(&keep, "").map_err(to_err)?;
+    }
+    Ok(rel_full)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntryDto {
+    pub rel: String,
+}
+
+#[tauri::command]
+pub fn list_directories(root: String) -> Result<Vec<DirEntryDto>, String> {
+    let root_path = PathBuf::from(&root);
+    let mut out = Vec::new();
+    walk_dirs(&root_path, &root_path, &mut out).map_err(to_err)?;
+    out.sort_by(|a, b| a.rel.cmp(&b.rel));
+    Ok(out)
+}
+
+fn walk_dirs(base: &Path, dir: &Path, out: &mut Vec<DirEntryDto>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().into_owned();
+        if matches!(
+            name_str.as_str(),
+            ".git" | ".knock" | "target" | "node_modules" | ".idea" | ".vscode"
+        ) {
+            continue;
+        }
+        if let Ok(rel) = path.strip_prefix(base) {
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if !rel_str.is_empty() {
+                out.push(DirEntryDto { rel: rel_str });
+            }
+        }
+        walk_dirs(base, &path, out)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_colors(root: String) -> Result<std::collections::HashMap<String, String>, String> {
+    let path = PathBuf::from(&root).join(".knock").join("colors.json");
+    if !path.is_file() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let raw = std::fs::read_to_string(&path).map_err(to_err)?;
+    let map: std::collections::HashMap<String, String> =
+        serde_json::from_str(&raw).unwrap_or_default();
+    Ok(map)
+}
+
+#[tauri::command]
+pub fn set_color(root: String, key: String, color: Option<String>) -> Result<(), String> {
+    let dir = PathBuf::from(&root).join(".knock");
+    let path = dir.join("colors.json");
+    std::fs::create_dir_all(&dir).map_err(to_err)?;
+    let mut map: std::collections::HashMap<String, String> = if path.is_file() {
+        let raw = std::fs::read_to_string(&path).map_err(to_err)?;
+        serde_json::from_str(&raw).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+    match color {
+        Some(c) if !c.is_empty() => {
+            map.insert(key, c);
+        }
+        _ => {
+            map.remove(&key);
+        }
+    }
+    let json = serde_json::to_string_pretty(&map).map_err(to_err)?;
+    std::fs::write(&path, json).map_err(to_err)
 }
 
 #[tauri::command]

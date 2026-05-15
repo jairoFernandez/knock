@@ -19,6 +19,10 @@ export interface TreeEntry {
   name: string | null;
 }
 
+export interface DirEntryDto {
+  rel: string;
+}
+
 export interface ResponseDto {
   status: number;
   url: string;
@@ -73,6 +77,21 @@ export interface FileChangeDto {
   status: string;
   path: string;
 }
+
+export interface WorkingChangeDto {
+  path: string;
+  staged: string;
+  unstaged: string;
+}
+
+export interface GitStateDto {
+  branch: string;
+  hasCommits: boolean;
+  changes: WorkingChangeDto[];
+  stagedCount: number;
+  unstagedCount: number;
+}
+
 
 
 

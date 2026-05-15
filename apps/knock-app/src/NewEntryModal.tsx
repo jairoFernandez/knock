@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-type Kind = "request" | "fragment" | "flow" | "environment";
+type Kind = "request" | "fragment" | "flow" | "environment" | "folder";
 
 interface Props {
   root: string;
   initialKind?: Kind;
-  onCreated: (rel: string) => void;
+  onCreated: (rel: string, kind: Kind) => void;
   onCancel: () => void;
 }
 
 const KINDS: { value: Kind; label: string; placeholder: string; hint: string }[] = [
   { value: "request", label: "Request", placeholder: "users/list", hint: "saved as requests/<path>.toml" },
+  { value: "folder", label: "Folder", placeholder: "github.com/repos", hint: "saved under requests/<path>/" },
   { value: "fragment", label: "Fragment", placeholder: "auth/bearer", hint: "saved as fragments/<path>.toml" },
   { value: "flow", label: "Flow", placeholder: "checkout", hint: "saved as flows/<path>.toml" },
   { value: "environment", label: "Environment", placeholder: "staging", hint: "saved as environments/<path>.toml" },
@@ -85,6 +86,7 @@ export function NewEntryModal({ root, initialKind = "request", onCreated, onCanc
 
   const config = KINDS.find((k) => k.value === kind)!;
   const isRequest = kind === "request";
+  const isFolder = kind === "folder";
 
   const derivation = isRequest ? deriveFromUrl(url, method) : null;
 
@@ -100,15 +102,24 @@ export function NewEntryModal({ root, initialKind = "request", onCreated, onCanc
     if (!finalPath) return setError("Enter a path (or fill the URL to auto-suggest one).");
     setBusy(true);
     try {
-      const rel = await invoke<string>("create_entry", {
-        root,
-        kind,
-        rel: finalPath,
-        url: isRequest && url.trim() ? url.trim() : null,
-        method: isRequest ? method : null,
-        name: isRequest ? derivation?.name ?? null : null,
-      });
-      onCreated(rel);
+      if (isFolder) {
+        const rel = await invoke<string>("create_folder", {
+          root,
+          kind: "request",
+          rel: finalPath,
+        });
+        onCreated(rel, kind);
+      } else {
+        const rel = await invoke<string>("create_entry", {
+          root,
+          kind,
+          rel: finalPath,
+          url: isRequest && url.trim() ? url.trim() : null,
+          method: isRequest ? method : null,
+          name: isRequest ? derivation?.name ?? null : null,
+        });
+        onCreated(rel, kind);
+      }
     } catch (e) {
       setError(String(e));
     } finally {

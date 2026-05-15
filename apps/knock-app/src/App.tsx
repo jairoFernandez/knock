@@ -12,6 +12,10 @@ import { Dashboard } from "./Dashboard";
 import { Rail, type RailMode } from "./Rail";
 import { FileBrowser } from "./FileBrowser";
 import { GitPanel } from "./GitPanel";
+import { Splitter } from "./Splitter";
+import { usePersistedNumber } from "./hooks";
+import { ColorPicker } from "./ColorPicker";
+import type { DirEntryDto } from "./types";
 import type {
   KV,
   RequestForm,
@@ -40,6 +44,15 @@ export function App() {
   const [showNewEntry, setShowNewEntry] = useState(false);
   const [railMode, setRailMode] = useState<RailMode>("workspace");
   const [filesRefreshToken, setFilesRefreshToken] = useState(0);
+  const [directories, setDirectories] = useState<string[]>([]);
+  const [colors, setColors] = useState<Record<string, string>>({});
+  const [colorTarget, setColorTarget] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = usePersistedNumber("knock.layout.sidebar", 260);
+  const [responseWidth, setResponseWidth] = usePersistedNumber("knock.layout.response", 480);
+
+  function clampWidth(v: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, v));
+  }
 
   const varsRecord = useMemo(() => {
     const r: Record<string, string> = {};
@@ -55,12 +68,16 @@ export function App() {
     setViewIdx({});
     setError(null);
     try {
-      const [list, envList] = await Promise.all([
+      const [list, envList, dirList, colorMap] = await Promise.all([
         invoke<TreeEntry[]>("list_tree", { root: info.root }),
         invoke<string[]>("list_envs", { root: info.root }),
+        invoke<DirEntryDto[]>("list_directories", { root: info.root }),
+        invoke<Record<string, string>>("get_colors", { root: info.root }),
       ]);
       setEntries(list);
       setEnvs(envList);
+      setDirectories(dirList.map((d) => d.rel));
+      setColors(colorMap);
       let active = info.activeEnv;
       if (!active && envList.length > 0) {
         const preferred = envList.includes("local") ? "local" : envList[0];
@@ -86,6 +103,22 @@ export function App() {
       setEnvVars(vars);
     } catch {
       setEnvVars([]);
+    }
+  }
+
+  async function refreshTree(root: string) {
+    try {
+      const [list, dirList, colorMap] = await Promise.all([
+        invoke<TreeEntry[]>("list_tree", { root }),
+        invoke<DirEntryDto[]>("list_directories", { root }),
+        invoke<Record<string, string>>("get_colors", { root }),
+      ]);
+      setEntries(list);
+      setDirectories(dirList.map((d) => d.rel));
+      setColors(colorMap);
+      setFilesRefreshToken((t) => t + 1);
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -190,8 +223,7 @@ export function App() {
         delete next[key];
         return next;
       });
-      const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
-      setEntries(list);
+      await refreshTree(workspace.root);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -243,7 +275,12 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={{
+        gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px`,
+      }}
+    >
       <div className="topbar" data-tauri-drag-region>
         <button
           className="back-btn"
@@ -316,6 +353,8 @@ export function App() {
             {workspace && (
               <Tree
                 entries={entries}
+                directories={directories}
+                colors={colors}
                 selected={selected}
                 onSelect={setSelected}
                 onDelete={async (path) => {
@@ -323,18 +362,37 @@ export function App() {
                   if (!confirm(`Delete ${path}?`)) return;
                   try {
                     await invoke("delete_entry", { root: workspace.root, rel: path });
-                    const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
-                    setEntries(list);
-                    setFilesRefreshToken((t) => t + 1);
                     if (selected === path) {
                       setSelected(null);
                       setForm(null);
                       setRawContent("");
                     }
+                    await refreshTree(workspace.root);
                   } catch (e) {
                     setError(String(e));
                   }
                 }}
+                onRename={async (path) => {
+                  if (!workspace) return;
+                  const next = window.prompt("New path (relative to workspace):", path);
+                  if (next === null) return;
+                  const target = next.trim();
+                  if (!target || target === path) return;
+                  try {
+                    const updated = await invoke<string>("rename_entry", {
+                      root: workspace.root,
+                      oldRel: path,
+                      newRel: target,
+                    });
+                    if (selected === path) {
+                      setSelected(updated);
+                    }
+                    await refreshTree(workspace.root);
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                onSetColor={(dirPath) => setColorTarget(dirPath)}
               />
             )}
           </>
@@ -353,10 +411,20 @@ export function App() {
         {railMode === "git" && workspace && (
           <>
             <div className="panel-header">Git</div>
-            <GitPanel root={workspace.root} />
+            <GitPanel
+              root={workspace.root}
+              onOpenFile={(rel) => {
+                setSelected(rel);
+                setRailMode("files");
+              }}
+            />
           </>
         )}
       </div>
+
+      <Splitter
+        onDelta={(d) => setSidebarWidth(clampWidth(sidebarWidth + d, 180, 600))}
+      />
 
       <div className="panel editor-panel">
         {!selected && <div className="empty">Select a request from the tree.</div>}
@@ -398,6 +466,10 @@ export function App() {
           </>
         )}
       </div>
+
+      <Splitter
+        onDelta={(d) => setResponseWidth(clampWidth(responseWidth - d, 240, 1200))}
+      />
 
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
@@ -448,17 +520,38 @@ export function App() {
         <NewEntryModal
           root={workspace.root}
           onCancel={() => setShowNewEntry(false)}
-          onCreated={async (rel) => {
+          onCreated={async (rel, kind) => {
             setShowNewEntry(false);
-            try {
-              const list = await invoke<TreeEntry[]>("list_tree", { root: workspace.root });
-              setEntries(list);
-              setSelected(rel);
-            } catch (e) {
-              setError(String(e));
-            }
+            await refreshTree(workspace.root);
+            if (kind !== "folder") setSelected(rel);
           }}
         />
+      )}
+
+      {colorTarget && workspace && (
+        <div className="modal-backdrop" onClick={() => setColorTarget(null)}>
+          <ColorPicker
+            current={colors[colorTarget]}
+            onClose={() => setColorTarget(null)}
+            onPick={async (c) => {
+              try {
+                await invoke("set_color", {
+                  root: workspace.root,
+                  key: colorTarget,
+                  color: c,
+                });
+                setColors((prev) => {
+                  const next = { ...prev };
+                  if (c) next[colorTarget] = c;
+                  else delete next[colorTarget];
+                  return next;
+                });
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+          />
+        </div>
       )}
     </div>
   );
