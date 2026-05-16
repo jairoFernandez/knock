@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+      - id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  build-cli:
+    name: Build CLI (${{ matrix.os_name }}-${{ matrix.arch }})
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            os_name: macos
+            arch: x86_64
+            ext: ''
+            archive: tar.gz
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: aarch64
+            ext: ''
+            archive: tar.gz
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch: x86_64
+            ext: ''
+            archive: tar.gz
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            os_name: linux
+            arch: aarch64
+            ext: ''
+            archive: tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            os_name: windows
+            arch: x86_64
+            ext: '.exe'
+            archive: zip
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            os_name: windows
+            arch: aarch64
+            ext: '.exe'
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build CLI
+        run: cargo build --release --bin knock --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${{ needs.create-release.outputs.tag }}"
+          VERSION="${VERSION#v}"
+          NAME="knock-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          mkdir -p dist
+          BIN="target/${{ matrix.target }}/release/knock${{ matrix.ext }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "$BIN" "dist/knock${{ matrix.ext }}"
+            (cd dist && 7z a "${NAME}.zip" "knock${{ matrix.ext }}" >/dev/null)
+            rm "dist/knock${{ matrix.ext }}"
+            ASSET="dist/${NAME}.zip"
+          else
+            cp "$BIN" "dist/knock"
+            (cd dist && tar -czf "${NAME}.tar.gz" knock)
+            rm "dist/knock"
+            ASSET="dist/${NAME}.tar.gz"
+          fi
+          # SHA256 sidecar (portable across mac/linux/win-bash)
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "$(basename "$ASSET")" > "$(basename "$ASSET").sha256")
+          else
+            (cd dist && shasum -a 256 "$(basename "$ASSET")" > "$(basename "$ASSET").sha256")
+          fi
+          echo "ASSET=$ASSET"             >> "$GITHUB_ENV"
+          echo "ASSET_SUM=${ASSET}.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.tag }}
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET_SUM }}
+
+  build-app:
+    name: Build Tauri (${{ matrix.os_name }}-${{ matrix.arch }})
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            os_name: macos
+            arch: x86_64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: aarch64
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch: x86_64
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            os_name: windows
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            apps/knock-app/src-tauri
+          key: tauri-${{ matrix.target }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: apps/knock-app/pnpm-lock.yaml
+
+      - name: Install Linux deps
+        if: matrix.os_name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev build-essential curl wget file
+
+      - name: Install JS deps
+        working-directory: apps/knock-app
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/knock-app
+          tagName: ${{ needs.create-release.outputs.tag }}
+          releaseName: ${{ needs.create-release.outputs.tag }}
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
