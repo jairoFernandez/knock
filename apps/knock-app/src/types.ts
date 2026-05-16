@@ -43,6 +43,7 @@ export type BodyForm =
   | { kind: "none" }
   | { kind: "text"; text: string }
   | { kind: "json"; json: string }
+  | { kind: "form"; form: KV[] }
   | { kind: "file"; path: string };
 
 export interface RequestForm {

@@ -37,6 +37,7 @@ pub struct BodySpec {
     pub text: Option<String>,
     pub file: Option<String>,
     pub json: Option<toml::Value>,
+    pub form: Option<IndexMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -83,6 +84,7 @@ pub enum ResolvedBody {
     Text(String),
     Json(serde_json::Value),
     Bytes(Vec<u8>),
+    Form(Vec<(String, String)>),
 }
 
 #[derive(Debug, Clone)]

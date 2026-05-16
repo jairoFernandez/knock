@@ -1,7 +1,12 @@
-import type { BodyForm } from "./types";
+import { useLayoutEffect, useMemo, useRef } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { BodyForm, KV } from "./types";
+import { highlightJson } from "./jsonHighlight";
+import { KVTable } from "./KVTable";
 
 interface Props {
   body: BodyForm;
+  vars: Record<string, string>;
   onChange: (next: BodyForm) => void;
 }
 
@@ -9,19 +14,35 @@ const KINDS: { value: BodyForm["kind"]; label: string }[] = [
   { value: "none", label: "No body" },
   { value: "text", label: "Text" },
   { value: "json", label: "JSON" },
+  { value: "form", label: "Form" },
   { value: "file", label: "File" },
 ];
 
-export function BodyTab({ body, onChange }: Props) {
+export function BodyTab({ body, vars, onChange }: Props) {
   function setKind(kind: BodyForm["kind"]) {
     switch (kind) {
-      case "none": return onChange({ kind: "none" });
-      case "text": return onChange({ kind: "text", text: body.kind === "text" ? body.text : "" });
-      case "json": return onChange({
-        kind: "json",
-        json: body.kind === "json" ? body.json : "{\n  \n}",
-      });
-      case "file": return onChange({ kind: "file", path: body.kind === "file" ? body.path : "" });
+      case "none":
+        return onChange({ kind: "none" });
+      case "text":
+        return onChange({
+          kind: "text",
+          text: body.kind === "text" ? body.text : "",
+        });
+      case "json":
+        return onChange({
+          kind: "json",
+          json: body.kind === "json" ? body.json : "{\n  \n}",
+        });
+      case "form":
+        return onChange({
+          kind: "form",
+          form: body.kind === "form" ? body.form : [],
+        });
+      case "file":
+        return onChange({
+          kind: "file",
+          path: body.kind === "file" ? body.path : "",
+        });
     }
   }
 
@@ -55,24 +76,165 @@ export function BodyTab({ body, onChange }: Props) {
       )}
 
       {body.kind === "json" && (
-        <textarea
-          className="body-textarea body-json"
+        <JsonBodyEditor
           value={body.json}
-          onChange={(e) => onChange({ kind: "json", json: e.target.value })}
-          placeholder='{"key": "value"}'
-          spellCheck={false}
+          onChange={(json) => onChange({ kind: "json", json })}
+        />
+      )}
+
+      {body.kind === "form" && (
+        <FormBodyEditor
+          rows={body.form}
+          vars={vars}
+          onChange={(form) => onChange({ kind: "form", form })}
         />
       )}
 
       {body.kind === "file" && (
+        <FileBodyEditor
+          path={body.path}
+          onChange={(path) => onChange({ kind: "file", path })}
+        />
+      )}
+    </div>
+  );
+}
+
+function JsonBodyEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    const pre = preRef.current;
+    if (!ta || !pre) return;
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  });
+
+  const parseError = useMemo(() => {
+    if (!value.trim()) return null;
+    try {
+      JSON.parse(value);
+      return null;
+    } catch (e) {
+      return String((e as Error).message);
+    }
+  }, [value]);
+
+  function format() {
+    try {
+      const pretty = JSON.stringify(JSON.parse(value), null, 2);
+      onChange(pretty);
+    } catch {
+      /* noop */
+    }
+  }
+
+  function minify() {
+    try {
+      const tight = JSON.stringify(JSON.parse(value));
+      onChange(tight);
+    } catch {
+      /* noop */
+    }
+  }
+
+  return (
+    <div className="body-json-wrap">
+      <div className="body-json-toolbar">
+        <span className={`body-json-status ${parseError ? "err" : "ok"}`}>
+          {parseError ? "✗ invalid" : value.trim() ? "✓ valid" : "empty"}
+        </span>
+        <div className="body-json-actions">
+          <button type="button" onClick={format} disabled={!!parseError || !value.trim()}>
+            Format
+          </button>
+          <button type="button" onClick={minify} disabled={!!parseError || !value.trim()}>
+            Minify
+          </button>
+        </div>
+      </div>
+      <div className="code-editor body-json-editor">
+        <pre ref={preRef} className="code-editor-pre" aria-hidden="true">
+          <code
+            dangerouslySetInnerHTML={{ __html: highlightJson(value) + "\n" }}
+          />
+        </pre>
+        <textarea
+          ref={taRef}
+          className="code-editor-ta"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={(e) => {
+            const pre = preRef.current;
+            if (!pre) return;
+            pre.scrollTop = e.currentTarget.scrollTop;
+            pre.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          placeholder='{"key": "value"}'
+        />
+      </div>
+      {parseError && <div className="body-json-err">{parseError}</div>}
+    </div>
+  );
+}
+
+function FormBodyEditor({
+  rows,
+  vars,
+  onChange,
+}: {
+  rows: KV[];
+  vars: Record<string, string>;
+  onChange: (next: KV[]) => void;
+}) {
+  return (
+    <div className="body-form-wrap">
+      <div className="body-form-hint">
+        Sent as <code>application/x-www-form-urlencoded</code>. Add a Content-Type header to override.
+      </div>
+      <KVTable rows={rows} vars={vars} keyPlaceholder="field" onChange={onChange} />
+    </div>
+  );
+}
+
+function FileBodyEditor({
+  path,
+  onChange,
+}: {
+  path: string;
+  onChange: (next: string) => void;
+}) {
+  async function pickFile() {
+    const picked = await open({ multiple: false, directory: false });
+    if (typeof picked === "string") onChange(picked);
+  }
+
+  return (
+    <div className="body-file-wrap">
+      <div className="body-file-row">
         <input
           className="body-file"
           type="text"
-          value={body.path}
-          onChange={(e) => onChange({ kind: "file", path: e.target.value })}
+          value={path}
+          onChange={(e) => onChange(e.target.value)}
           placeholder="./relative/path/to/body.json"
         />
-      )}
+        <button type="button" onClick={pickFile}>Browse…</button>
+      </div>
+      <div className="body-file-hint">
+        Path is resolved relative to the request file. Absolute paths also work.
+      </div>
     </div>
   );
 }

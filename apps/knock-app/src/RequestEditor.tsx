@@ -122,7 +122,11 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
           />
         )}
         {tab === "body" && (
-          <BodyTab body={form.body} onChange={(body) => onChange({ ...form, body })} />
+          <BodyTab
+            body={form.body}
+            vars={vars}
+            onChange={(body) => onChange({ ...form, body })}
+          />
         )}
         {tab === "headers" && (
           <KVTable

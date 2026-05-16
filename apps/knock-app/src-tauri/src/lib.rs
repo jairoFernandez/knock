@@ -46,6 +46,9 @@ pub fn run() {
             commands::open_terminal,
             commands::open_url,
             commands::set_workspace_appearance,
+            commands::set_folder_order,
+            commands::list_folder_orders,
+            commands::update_request_method,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

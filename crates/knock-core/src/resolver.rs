@@ -142,6 +142,9 @@ fn resolve_body(
     if spec.json.is_some() {
         count += 1;
     }
+    if spec.form.is_some() {
+        count += 1;
+    }
     if count > 1 {
         return Err(ResolveError::AmbiguousBody);
     }
@@ -165,6 +168,14 @@ fn resolve_body(
         let json: serde_json::Value = serde_json::to_value(value).expect("toml -> json");
         let interpolated = interpolate_json(&json, vars)?;
         return Ok(ResolvedBody::Json(interpolated));
+    }
+
+    if let Some(form) = &spec.form {
+        let mut pairs: Vec<(String, String)> = Vec::with_capacity(form.len());
+        for (k, v) in form {
+            pairs.push((interpolate(k, vars)?, interpolate(v, vars)?));
+        }
+        return Ok(ResolvedBody::Form(pairs));
     }
 
     Ok(ResolvedBody::Text(String::new()))

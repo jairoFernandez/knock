@@ -50,6 +50,30 @@ export function usePersistedNumber(key: string, initial: number): [number, (v: n
   return [value, setValue];
 }
 
+export function usePersistedString<T extends string>(
+  key: string,
+  initial: T | null,
+): [T | null, (v: T | null) => void] {
+  const [value, setValue] = useState<T | null>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null || raw === "") return initial;
+      return raw as T;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch {
+      /* ignore */
+    }
+  }, [key, value]);
+  return [value, setValue];
+}
+
 interface DragOptions {
   axis?: "x" | "y";
   onDelta: (deltaPx: number) => void;

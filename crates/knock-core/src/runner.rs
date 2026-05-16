@@ -40,6 +40,7 @@ pub async fn execute(req: &ResolvedRequest) -> Result<Response, RunError> {
             ResolvedBody::Text(s) => builder.body(s.clone()),
             ResolvedBody::Bytes(b) => builder.body(b.clone()),
             ResolvedBody::Json(j) => builder.json(j),
+            ResolvedBody::Form(pairs) => builder.form(pairs),
         };
     }
 

@@ -35,6 +35,7 @@ pub enum BodyDto {
     None,
     Text { text: String },
     Json { json: String },
+    Form { form: Vec<KvDto> },
     File { path: String },
 }
 
@@ -570,12 +571,15 @@ pub fn create_entry(
         std::fs::create_dir_all(parent).map_err(to_err)?;
     }
     std::fs::write(&path, template).map_err(to_err)?;
+    let parent_rel = parent_dir_rel(&rel_full);
+    let base = base_name_of(&rel_full);
+    order_append_if_exists(&root_path, &parent_rel, &base);
     Ok(rel_full)
 }
 
 #[tauri::command]
 pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
-    let normalized = rel.trim().trim_start_matches('/');
+    let normalized = rel.trim().trim_start_matches('/').to_string();
     if normalized == "knock.toml" {
         return Err("knock.toml is protected and cannot be deleted".into());
     }
@@ -583,7 +587,13 @@ pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
     if !path.is_file() {
         return Err("not a file".into());
     }
-    std::fs::remove_file(&path).map_err(to_err)
+    std::fs::remove_file(&path).map_err(to_err)?;
+    if let Ok(root_path) = PathBuf::from(&root).canonicalize() {
+        let parent_rel = parent_dir_rel(&normalized);
+        let base = base_name_of(&normalized);
+        order_remove_if_exists(&root_path, &parent_rel, &base);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -616,6 +626,27 @@ pub fn rename_entry(root: String, old_rel: String, new_rel: String) -> Result<St
         std::fs::create_dir_all(parent).map_err(to_err)?;
     }
     std::fs::rename(&old_path, &new_path).map_err(to_err)?;
+    let old_parent = parent_dir_rel(&old_trimmed);
+    let new_parent = parent_dir_rel(&new_trimmed);
+    let old_base = base_name_of(&old_trimmed);
+    let new_base = base_name_of(&new_trimmed);
+    if old_parent == new_parent {
+        if let Some(mut o) = read_order(&root_path, &old_parent) {
+            let mut changed = false;
+            for slot in o.order.iter_mut() {
+                if *slot == old_base {
+                    *slot = new_base.clone();
+                    changed = true;
+                }
+            }
+            if changed {
+                let _ = write_order(&root_path, &old_parent, &o);
+            }
+        }
+    } else {
+        order_remove_if_exists(&root_path, &old_parent, &old_base);
+        order_append_if_exists(&root_path, &new_parent, &new_base);
+    }
     Ok(new_trimmed)
 }
 
@@ -652,7 +683,11 @@ pub fn delete_folder(root: String, rel: String) -> Result<(), String> {
     if !canonical.starts_with(&root_path) {
         return Err("path escapes workspace root".into());
     }
-    std::fs::remove_dir_all(&canonical).map_err(to_err)
+    std::fs::remove_dir_all(&canonical).map_err(to_err)?;
+    let parent_rel = parent_dir_rel(&trimmed);
+    let base = base_name_of(&trimmed);
+    order_remove_if_exists(&root_path, &parent_rel, &base);
+    Ok(())
 }
 
 #[tauri::command]
@@ -682,6 +717,9 @@ pub fn create_folder(root: String, kind: String, rel: String) -> Result<String, 
     if !keep.exists() {
         std::fs::write(&keep, "").map_err(to_err)?;
     }
+    let parent_rel = parent_dir_rel(&rel_full);
+    let base = base_name_of(&rel_full);
+    order_append_if_exists(&root_path, &parent_rel, &base);
     Ok(rel_full)
 }
 
@@ -1037,6 +1075,13 @@ fn request_to_form(r: knock_core::Request) -> RequestFormDto {
                     serde_json::to_value(&json).unwrap_or(serde_json::Value::Null);
                 let json_str = serde_json::to_string_pretty(&json_val).unwrap_or_default();
                 BodyDto::Json { json: json_str }
+            } else if let Some(form) = b.form {
+                BodyDto::Form {
+                    form: form
+                        .into_iter()
+                        .map(|(key, value)| KvDto { key, value })
+                        .collect(),
+                }
             } else if let Some(text) = b.text {
                 BodyDto::Text { text }
             } else if let Some(file) = b.file {
@@ -1073,6 +1118,8 @@ struct TomlBody<'a> {
     file: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     json: Option<toml::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    form: Option<IndexMap<String, String>>,
 }
 
 #[derive(Serialize)]
@@ -1111,11 +1158,13 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
             text: Some(text.as_str()),
             file: None,
             json: None,
+            form: None,
         }),
         BodyDto::File { path } => Some(TomlBody {
             text: None,
             file: Some(path.as_str()),
             json: None,
+            form: None,
         }),
         BodyDto::Json { json } => {
             let value: serde_json::Value = serde_json::from_str(json)
@@ -1125,6 +1174,20 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
                 text: None,
                 file: None,
                 json: Some(toml_val),
+                form: None,
+            })
+        }
+        BodyDto::Form { form: pairs } => {
+            let map: IndexMap<String, String> = pairs
+                .iter()
+                .filter(|kv| !kv.key.is_empty())
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+            Some(TomlBody {
+                text: None,
+                file: None,
+                json: None,
+                form: Some(map),
             })
         }
     };
@@ -1267,6 +1330,166 @@ pub fn clear_history(root: String, rel: String) -> Result<(), String> {
         std::fs::remove_file(&path).map_err(to_err)?;
     }
     Ok(())
+}
+
+// ---------- folder ordering (.knock-order.json) ----------
+
+const ORDER_FILE: &str = ".knock-order.json";
+
+#[derive(Serialize, Deserialize, Default)]
+struct FolderOrder {
+    order: Vec<String>,
+}
+
+fn parent_dir_rel(rel: &str) -> String {
+    let trimmed = rel.trim_matches('/');
+    match trimmed.rsplit_once('/') {
+        Some((parent, _)) => parent.to_string(),
+        None => String::new(),
+    }
+}
+
+fn base_name_of(rel: &str) -> String {
+    let trimmed = rel.trim_matches('/');
+    match trimmed.rsplit_once('/') {
+        Some((_, base)) => base.to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+fn order_path(root: &Path, dir_rel: &str) -> PathBuf {
+    if dir_rel.is_empty() {
+        root.join(ORDER_FILE)
+    } else {
+        root.join(dir_rel).join(ORDER_FILE)
+    }
+}
+
+fn read_order(root: &Path, dir_rel: &str) -> Option<FolderOrder> {
+    let path = order_path(root, dir_rel);
+    if !path.is_file() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_order(root: &Path, dir_rel: &str, order: &FolderOrder) -> Result<(), String> {
+    let path = order_path(root, dir_rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(to_err)?;
+    }
+    let json = serde_json::to_string_pretty(order).map_err(to_err)?;
+    std::fs::write(&path, json).map_err(to_err)
+}
+
+fn order_append_if_exists(root: &Path, dir_rel: &str, name: &str) {
+    if let Some(mut o) = read_order(root, dir_rel) {
+        if !o.order.iter().any(|s| s == name) {
+            o.order.push(name.to_string());
+            let _ = write_order(root, dir_rel, &o);
+        }
+    }
+}
+
+fn order_remove_if_exists(root: &Path, dir_rel: &str, name: &str) {
+    if let Some(mut o) = read_order(root, dir_rel) {
+        let before = o.order.len();
+        o.order.retain(|s| s != name);
+        if o.order.len() != before {
+            let _ = write_order(root, dir_rel, &o);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_folder_order(root: String, dir_rel: String, order: Vec<String>) -> Result<(), String> {
+    let trimmed = dir_rel.trim().trim_start_matches('/').to_string();
+    if trimmed.contains("..") {
+        return Err("path cannot contain ..".into());
+    }
+    let root_path = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace root: {e}"))?;
+    let dir_path = if trimmed.is_empty() {
+        root_path.clone()
+    } else {
+        root_path.join(&trimmed)
+    };
+    if !dir_path.is_dir() {
+        return Err(format!("{trimmed} is not a directory"));
+    }
+    let folder = FolderOrder { order };
+    write_order(&root_path, &trimmed, &folder)
+}
+
+#[tauri::command]
+pub fn list_folder_orders(
+    root: String,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let root_path = PathBuf::from(&root);
+    let mut out = std::collections::HashMap::new();
+    collect_orders(&root_path, &root_path, &mut out).map_err(to_err)?;
+    Ok(out)
+}
+
+fn collect_orders(
+    base: &Path,
+    dir: &Path,
+    out: &mut std::collections::HashMap<String, Vec<String>>,
+) -> std::io::Result<()> {
+    let order_file = dir.join(ORDER_FILE);
+    if order_file.is_file() {
+        if let Ok(raw) = std::fs::read_to_string(&order_file) {
+            if let Ok(parsed) = serde_json::from_str::<FolderOrder>(&raw) {
+                let rel = dir
+                    .strip_prefix(base)
+                    .ok()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                out.insert(rel, parsed.order);
+            }
+        }
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().into_owned();
+        if matches!(
+            name_str.as_str(),
+            ".git" | ".knock" | "target" | "node_modules" | ".idea" | ".vscode"
+        ) {
+            continue;
+        }
+        collect_orders(base, &path, out)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_request_method(root: String, rel: String, method: String) -> Result<(), String> {
+    let m_upper = method.trim().to_uppercase();
+    if m_upper.is_empty() {
+        return Err("method cannot be empty".into());
+    }
+    let path = safe_join(&root, &rel)?;
+    if !path.is_file() {
+        return Err("not a file".into());
+    }
+    let text = std::fs::read_to_string(&path).map_err(to_err)?;
+    let re = method_regex();
+    let replaced = if re.is_match(&text) {
+        re.replace(&text, format!("method = \"{m_upper}\"").as_str())
+            .into_owned()
+    } else {
+        // Prepend a method line at the top if none exists.
+        format!("method = \"{m_upper}\"\n{text}")
+    };
+    std::fs::write(&path, replaced).map_err(to_err)
 }
 
 fn safe_join(root: &str, rel: &str) -> Result<PathBuf, String> {

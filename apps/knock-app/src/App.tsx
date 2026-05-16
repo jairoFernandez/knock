@@ -13,7 +13,9 @@ import { Rail, type RailMode } from "./Rail";
 import { FileBrowser } from "./FileBrowser";
 import { GitPanel } from "./GitPanel";
 import { Splitter } from "./Splitter";
-import { usePersistedNumber, useConfirm } from "./hooks";
+import { usePersistedNumber, usePersistedString, useConfirm } from "./hooks";
+import { ToolsRail } from "./ToolsRail";
+import { ToolsPanel, type ToolKey } from "./ToolsPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ColorPicker } from "./ColorPicker";
 import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
@@ -28,6 +30,43 @@ import type {
 } from "./types";
 
 const win = getCurrentWindow();
+
+function collectChildBases(
+  entries: TreeEntry[],
+  directories: string[],
+  dirRel: string,
+  folderOrders: Record<string, string[]>,
+): string[] {
+  const prefix = dirRel ? `${dirRel}/` : "";
+  const names = new Set<string>();
+  for (const e of entries) {
+    if (!e.rel.startsWith(prefix)) continue;
+    const rest = e.rel.slice(prefix.length);
+    if (!rest) continue;
+    const first = rest.split("/")[0];
+    if (rest === first) names.add(first);
+  }
+  for (const d of directories) {
+    if (!d.startsWith(prefix)) continue;
+    const rest = d.slice(prefix.length);
+    if (!rest) continue;
+    const first = rest.split("/")[0];
+    if (rest === first) names.add(first);
+  }
+  const order = folderOrders[dirRel] ?? [];
+  const ordered: string[] = [];
+  const used = new Set<string>();
+  for (const n of order) {
+    if (names.has(n)) {
+      ordered.push(n);
+      used.add(n);
+    }
+  }
+  const rest = Array.from(names)
+    .filter((n) => !used.has(n))
+    .sort();
+  return [...ordered, ...rest];
+}
 
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
@@ -50,10 +89,13 @@ export function App() {
   const [filesRefreshToken, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
+  const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
   const [colorTarget, setColorTarget] = useState<string | null>(null);
   const [showAppearance, setShowAppearance] = useState(false);
   const [sidebarWidth, setSidebarWidth] = usePersistedNumber("knock.layout.sidebar", 260);
   const [responseWidth, setResponseWidth] = usePersistedNumber("knock.layout.response", 480);
+  const [toolsWidth, setToolsWidth] = usePersistedNumber("knock.layout.tools", 320);
+  const [activeTool, setActiveTool] = usePersistedString<ToolKey>("knock.layout.toolsTab", null);
   const { pending: confirmPending, confirm, resolve: resolveConfirm } = useConfirm();
 
   function clampWidth(v: number, min: number, max: number): number {
@@ -74,16 +116,18 @@ export function App() {
     setViewIdx({});
     setError(null);
     try {
-      const [list, envList, dirList, colorMap] = await Promise.all([
+      const [list, envList, dirList, colorMap, orderMap] = await Promise.all([
         invoke<TreeEntry[]>("list_tree", { root: info.root }),
         invoke<string[]>("list_envs", { root: info.root }),
         invoke<DirEntryDto[]>("list_directories", { root: info.root }),
         invoke<Record<string, string>>("get_colors", { root: info.root }),
+        invoke<Record<string, string[]>>("list_folder_orders", { root: info.root }),
       ]);
       setEntries(list);
       setEnvs(envList);
       setDirectories(dirList.map((d) => d.rel));
       setColors(colorMap);
+      setFolderOrders(orderMap);
       let active = info.activeEnv;
       if (!active && envList.length > 0) {
         const preferred = envList.includes("local") ? "local" : envList[0];
@@ -114,14 +158,16 @@ export function App() {
 
   async function refreshTree(root: string) {
     try {
-      const [list, dirList, colorMap] = await Promise.all([
+      const [list, dirList, colorMap, orderMap] = await Promise.all([
         invoke<TreeEntry[]>("list_tree", { root }),
         invoke<DirEntryDto[]>("list_directories", { root }),
         invoke<Record<string, string>>("get_colors", { root }),
+        invoke<Record<string, string[]>>("list_folder_orders", { root }),
       ]);
       setEntries(list);
       setDirectories(dirList.map((d) => d.rel));
       setColors(colorMap);
+      setFolderOrders(orderMap);
       setFilesRefreshToken((t) => t + 1);
     } catch (e) {
       setError(String(e));
@@ -303,8 +349,9 @@ export function App() {
     );
   }
 
+  const toolsCols = activeTool ? ` 4px ${toolsWidth}px 36px` : ` 36px`;
   const appStyle: React.CSSProperties = {
-    gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px`,
+    gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
   if (workspace.color) {
     (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
@@ -399,6 +446,7 @@ export function App() {
                 entries={entries}
                 directories={directories}
                 colors={colors}
+                folderOrders={folderOrders}
                 selected={selected}
                 onSelect={setSelected}
                 onDelete={async (path) => {
@@ -421,20 +469,21 @@ export function App() {
                     setError(String(e));
                   }
                 }}
-                onRename={async (path) => {
+                onRenameInline={async (path, newBase) => {
                   if (!workspace) return;
-                  const next = window.prompt("New path (relative to workspace):", path);
-                  if (next === null) return;
-                  const target = next.trim();
-                  if (!target || target === path) return;
+                  const parentIdx = path.lastIndexOf("/");
+                  const parent = parentIdx === -1 ? "" : path.slice(0, parentIdx);
+                  const target = parent ? `${parent}/${newBase}` : newBase;
+                  if (target === path) return;
                   try {
                     const updated = await invoke<string>("rename_entry", {
                       root: workspace.root,
                       oldRel: path,
                       newRel: target,
                     });
-                    if (selected === path) {
-                      setSelected(updated);
+                    if (selected === path) setSelected(updated);
+                    else if (selected && selected.startsWith(`${path}/`)) {
+                      setSelected(`${updated}${selected.slice(path.length)}`);
                     }
                     await refreshTree(workspace.root);
                   } catch (e) {
@@ -442,12 +491,16 @@ export function App() {
                   }
                 }}
                 onSetColor={(dirPath) => setColorTarget(dirPath)}
-                onAddInSection={(kind) => {
-                  setNewEntryPath("");
-                  setShowNewEntry(kind);
-                }}
-                onAddInFolder={(folderPath) => {
+                onAddRequest={(folderPath) => {
                   const top = folderPath.split("/")[0];
+                  if (top !== "requests") return;
+                  const rest = folderPath.slice("requests".length).replace(/^\//, "");
+                  setNewEntryPath(rest ? `${rest}/` : "");
+                  setShowNewEntry("request");
+                }}
+                onCreateFolder={async (parentPath, name) => {
+                  if (!workspace) return;
+                  const top = parentPath.split("/")[0];
                   const kindMap: Record<string, "request" | "flow" | "fragment" | "environment"> = {
                     requests: "request",
                     flows: "flow",
@@ -456,9 +509,106 @@ export function App() {
                   };
                   const kind = kindMap[top];
                   if (!kind) return;
-                  const rest = folderPath.slice(top.length + 1);
-                  setNewEntryPath(rest ? `${rest}/` : "");
-                  setShowNewEntry(kind);
+                  const rest = parentPath.slice(top.length).replace(/^\//, "");
+                  const rel = rest ? `${rest}/${name}` : name;
+                  try {
+                    await invoke("create_folder", { root: workspace.root, kind, rel });
+                    await refreshTree(workspace.root);
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                onCreateEntry={async (parentPath, name, kind) => {
+                  if (!workspace) return;
+                  const top = parentPath.split("/")[0];
+                  const kindDir: Record<string, string> = {
+                    request: "requests",
+                    flow: "flows",
+                    fragment: "fragments",
+                    environment: "environments",
+                  };
+                  if (kindDir[kind] !== top) return;
+                  const rest = parentPath.slice(top.length).replace(/^\//, "");
+                  const rel = rest ? `${rest}/${name}` : name;
+                  try {
+                    const created = await invoke<string>("create_entry", {
+                      root: workspace.root,
+                      kind,
+                      rel,
+                      url: null,
+                      method: null,
+                      name: null,
+                    });
+                    await refreshTree(workspace.root);
+                    setSelected(created);
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                onChangeMethod={async (path, method) => {
+                  if (!workspace) return;
+                  try {
+                    await invoke("update_request_method", {
+                      root: workspace.root,
+                      rel: path,
+                      method,
+                    });
+                    await refreshTree(workspace.root);
+                    if (selected === path) {
+                      const next = await invoke<RequestForm>("parse_request_form", {
+                        root: workspace.root,
+                        rel: path,
+                      });
+                      setForm(next);
+                    }
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                onMove={async ({ fromPath, toParent, toIndex }) => {
+                  if (!workspace) return;
+                  const base = fromPath.split("/").pop()!;
+                  const parentIdx = fromPath.lastIndexOf("/");
+                  const fromParent = parentIdx === -1 ? "" : fromPath.slice(0, parentIdx);
+                  const newRel = toParent ? `${toParent}/${base}` : base;
+                  try {
+                    let movedTo = fromPath;
+                    if (fromParent !== toParent) {
+                      movedTo = await invoke<string>("rename_entry", {
+                        root: workspace.root,
+                        oldRel: fromPath,
+                        newRel,
+                      });
+                      if (selected === fromPath) setSelected(movedTo);
+                      else if (selected && selected.startsWith(`${fromPath}/`)) {
+                        setSelected(`${movedTo}${selected.slice(fromPath.length)}`);
+                      }
+                    }
+                    // Compute target ordering, save explicitly.
+                    const movedBase = movedTo.split("/").pop()!;
+                    const allChildren = collectChildBases(
+                      entries,
+                      directories,
+                      toParent,
+                      folderOrders,
+                    );
+                    const filtered = allChildren.filter(
+                      (n) => n !== movedBase && n !== base,
+                    );
+                    const ordered = [
+                      ...filtered.slice(0, toIndex),
+                      movedBase,
+                      ...filtered.slice(toIndex),
+                    ];
+                    await invoke("set_folder_order", {
+                      root: workspace.root,
+                      dirRel: toParent,
+                      order: ordered,
+                    });
+                    await refreshTree(workspace.root);
+                  } catch (e) {
+                    setError(String(e));
+                  }
                 }}
                 onDeleteFolder={async (path) => {
                   if (!workspace) return;
@@ -607,6 +757,23 @@ export function App() {
           />
         )}
       </div>
+
+      {activeTool && (
+        <>
+          <Splitter
+            onDelta={(d) => setToolsWidth(clampWidth(toolsWidth - d, 240, 800))}
+          />
+          <ToolsPanel
+            tool={activeTool}
+            onClose={() => setActiveTool(null)}
+          />
+        </>
+      )}
+
+      <ToolsRail
+        active={activeTool}
+        onToggle={(t) => setActiveTool(activeTool === t ? null : t)}
+      />
 
       {showNew && (
         <NewWorkspaceModal
