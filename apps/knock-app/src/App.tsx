@@ -304,8 +304,12 @@ export function App() {
   const currentRunAt = currentRuns[currentIdx]?.at ?? null;
 
   if (!workspace) {
+    const dashCols = activeTool ? `1fr 4px ${toolsWidth}px 36px` : `1fr 36px`;
     return (
-      <div className="app app-dashboard">
+      <div
+        className="app app-dashboard"
+        style={{ gridTemplateColumns: dashCols }}
+      >
         <div className="topbar" data-tauri-drag-region>
           <h1 data-tauri-drag-region>KNOCK</h1>
           <div className="topbar-spacer" data-tauri-drag-region />
@@ -327,6 +331,21 @@ export function App() {
           onCreate={() => setShowNew(true)}
           onLoadInfo={loadWorkspace}
           confirm={confirm}
+        />
+        {activeTool && (
+          <>
+            <Splitter
+              onDelta={(d) => setToolsWidth(clampWidth(toolsWidth - d, 240, 800))}
+            />
+            <ToolsPanel
+              tool={activeTool}
+              onClose={() => setActiveTool(null)}
+            />
+          </>
+        )}
+        <ToolsRail
+          active={activeTool}
+          onToggle={(t) => setActiveTool(activeTool === t ? null : t)}
         />
         {showNew && (
           <NewWorkspaceModal
@@ -541,6 +560,26 @@ export function App() {
                     });
                     await refreshTree(workspace.root);
                     setSelected(created);
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                onChangeName={async (path, name) => {
+                  if (!workspace) return;
+                  try {
+                    await invoke("update_request_name", {
+                      root: workspace.root,
+                      rel: path,
+                      name,
+                    });
+                    await refreshTree(workspace.root);
+                    if (selected === path) {
+                      const next = await invoke<RequestForm>("parse_request_form", {
+                        root: workspace.root,
+                        rel: path,
+                      });
+                      setForm(next);
+                    }
                   } catch (e) {
                     setError(String(e));
                   }

@@ -33,6 +33,31 @@ const ITEMS: { key: ToolKey; label: string; icon: JSX.Element }[] = [
       </svg>
     ),
   },
+  {
+    key: "random",
+    label: "Random generator (UUID/bytes/password)",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+        <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.4" />
+        <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+        <circle cx="13" cy="7" r="1.2" fill="currentColor" />
+        <circle cx="10" cy="10" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="13" r="1.2" fill="currentColor" />
+        <circle cx="13" cy="13" r="1.2" fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
+    key: "date",
+    label: "Date / epoch converter",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+        <rect x="3" y="4" width="14" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M3 8 H17" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M7 2 V5 M13 2 V5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 export function ToolsRail({ active, onToggle }: Props) {

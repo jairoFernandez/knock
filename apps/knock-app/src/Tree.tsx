@@ -44,6 +44,7 @@ interface TreeProps {
   onCreateFolder?: (parentPath: string, name: string) => void;
   onCreateEntry?: (parentPath: string, name: string, kind: SectionKind) => void;
   onChangeMethod?: (path: string, method: string) => void;
+  onChangeName?: (path: string, name: string) => void;
   onMove?: (op: MoveOp) => void;
 }
 
@@ -161,6 +162,7 @@ interface RenderCtx {
   onCreateFolder?: (parent: string, name: string) => void;
   onCreateEntry?: (parent: string, name: string, kind: SectionKind) => void;
   onChangeMethod?: (path: string, method: string) => void;
+  onChangeName?: (path: string, name: string) => void;
   colors: Record<string, string>;
   folderOrders: Record<string, string[]>;
   editing: string | null;
@@ -250,11 +252,12 @@ function FileRow({
           selectExt={false}
           onCommit={(v) => {
             ctx.setEditing(null);
-            const ext = e.kind === "request" ? "" : ".toml";
-            const baseName = e.kind === "request"
-              ? (v.endsWith(".toml") ? v : `${v}.toml`)
-              : (v.endsWith(".toml") ? v : `${v}${ext}`);
-            ctx.onRenameInline?.(node.path, baseName);
+            if (e.kind === "request" && ctx.onChangeName) {
+              ctx.onChangeName(node.path, v);
+            } else {
+              const baseName = v.endsWith(".toml") ? v : `${v}.toml`;
+              ctx.onRenameInline?.(node.path, baseName);
+            }
           }}
           onCancel={() => ctx.setEditing(null)}
         />
@@ -544,6 +547,7 @@ export function Tree({
   onCreateFolder,
   onCreateEntry,
   onChangeMethod,
+  onChangeName,
   onMove,
 }: TreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -581,6 +585,7 @@ export function Tree({
     onCreateFolder,
     onCreateEntry,
     onChangeMethod,
+    onChangeName,
     colors,
     folderOrders,
     editing,

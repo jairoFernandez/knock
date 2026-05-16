@@ -18,6 +18,7 @@ export function InlineInput({
   className,
 }: Props) {
   const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -33,12 +34,20 @@ export function InlineInput({
   }, []);
 
   function commit() {
+    if (settled.current) return;
+    settled.current = true;
     const v = (ref.current?.value ?? "").trim();
     if (!v || v === initial) {
       onCancel();
       return;
     }
     onCommit(v);
+  }
+
+  function cancel() {
+    if (settled.current) return;
+    settled.current = true;
+    onCancel();
   }
 
   return (
@@ -48,13 +57,15 @@ export function InlineInput({
       placeholder={placeholder}
       className={`inline-input${className ? ` ${className}` : ""}`}
       onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
+        e.stopPropagation();
         if (e.key === "Enter") {
           e.preventDefault();
           commit();
         } else if (e.key === "Escape") {
           e.preventDefault();
-          onCancel();
+          cancel();
         }
       }}
       onBlur={commit}

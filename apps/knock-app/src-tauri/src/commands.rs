@@ -1471,6 +1471,24 @@ fn collect_orders(
 }
 
 #[tauri::command]
+pub fn update_request_name(root: String, rel: String, name: String) -> Result<(), String> {
+    let path = safe_join(&root, &rel)?;
+    if !path.is_file() {
+        return Err("not a file".into());
+    }
+    let text = std::fs::read_to_string(&path).map_err(to_err)?;
+    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let re = name_regex();
+    let replaced = if re.is_match(&text) {
+        re.replace(&text, format!("name = \"{escaped}\"").as_str())
+            .into_owned()
+    } else {
+        format!("name = \"{escaped}\"\n{text}")
+    };
+    std::fs::write(&path, replaced).map_err(to_err)
+}
+
+#[tauri::command]
 pub fn update_request_method(root: String, rel: String, method: String) -> Result<(), String> {
     let m_upper = method.trim().to_uppercase();
     if m_upper.is_empty() {
