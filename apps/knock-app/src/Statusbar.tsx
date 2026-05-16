@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
   workspaceRoot?: string | null;
@@ -7,7 +8,7 @@ interface Props {
   hint?: string | null;
 }
 
-const REPO = "knock-app/knock";
+const REPO = "jairoFernandez/knock";
 const REPO_URL = `https://github.com/${REPO}`;
 
 interface RepoMeta {
@@ -35,8 +36,12 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint }: Props
     };
   }, []);
 
-  function openRepo() {
-    window.open(REPO_URL, "_blank");
+  async function openRepo() {
+    try {
+      await invoke("open_url", { url: REPO_URL });
+    } catch (e) {
+      console.error("open_url failed", e);
+    }
   }
 
   return (

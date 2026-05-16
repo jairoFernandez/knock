@@ -44,6 +44,7 @@ pub fn run() {
             commands::git_add_remote,
             commands::open_in_file_manager,
             commands::open_terminal,
+            commands::open_url,
             commands::set_workspace_appearance,
         ])
         .run(tauri::generate_context!())

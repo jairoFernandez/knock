@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9e85ff"/>
+      <stop offset="100%" stop-color="#5b3fd1"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- tile -->
+  <rect x="48" y="48" width="928" height="928" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="48" y="48" width="928" height="928" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <!-- knock pulse rings -->
+  <g fill="none" stroke="#ffffff" stroke-linecap="round">
+    <circle cx="760" cy="280" r="58" stroke-opacity="0.22" stroke-width="14"/>
+    <circle cx="760" cy="280" r="98" stroke-opacity="0.12" stroke-width="14"/>
+  </g>
+  <circle cx="760" cy="280" r="32" fill="url(#glow)"/>
+  <circle cx="760" cy="280" r="22" fill="#ffffff"/>
+
+  <!-- monogram K, geometric -->
+  <g fill="#ffffff">
+    <!-- vertical stem -->
+    <rect x="252" y="276" width="112" height="472" rx="22"/>
+    <!-- upper diagonal -->
+    <path d="M 388 512 L 632 276 L 760 276 L 460 568 Z"/>
+    <!-- lower diagonal -->
+    <path d="M 460 480 L 776 748 L 648 748 L 388 528 Z"/>
+  </g>
+</svg>

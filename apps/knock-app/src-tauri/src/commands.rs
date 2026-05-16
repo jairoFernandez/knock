@@ -414,6 +414,28 @@ pub fn git_add_remote(root: String, name: String, url: String) -> Result<(), Str
 }
 
 #[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("only http(s) urls are allowed".into());
+    }
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "linux")]
+    let program = "xdg-open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    let status = std::process::Command::new(program)
+        .arg(trimmed)
+        .status()
+        .map_err(|e| format!("failed to open url: {e}"))?;
+    if !status.success() {
+        return Err(format!("opener exited with {status}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_terminal(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.is_dir() {
