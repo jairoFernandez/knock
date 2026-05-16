@@ -30,7 +30,7 @@ body {
   display: grid;
   grid-template-columns: 44px 260px 1fr 1fr;
   grid-template-rows: 34px 1fr 24px;
-  height: 100vh;
+  height: calc(100vh / var(--ui-zoom, 1));
 }
 .app-dashboard { grid-template-columns: 1fr; }
 
@@ -2894,6 +2894,39 @@ textarea {
   font-size: 10px;
   color: var(--text-dim);
 }
+
+.statusbar-item.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.zoom-btn, .zoom-pct {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.zoom-btn { width: 20px; font-size: 12px; }
+.zoom-pct {
+  min-width: 38px;
+  font-family: var(--mono);
+  font-size: 10px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.zoom-btn:hover:not(:disabled), .zoom-pct:hover { color: var(--text); background: var(--panel-2); }
+.zoom-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ---------- tab picker ---------- */
 .ws-tab-add-wrap { position: relative; -webkit-app-region: no-drag; }

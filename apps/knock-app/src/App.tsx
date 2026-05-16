@@ -19,7 +19,7 @@ import { ToolsPanel, type ToolKey } from "./ToolsPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ColorPicker } from "./ColorPicker";
 import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
-import { Statusbar } from "./Statusbar";
+import { Statusbar, SCALE_STEP, clampScale } from "./Statusbar";
 import type { DirEntryDto, RecentEntry } from "./types";
 import type {
   KV,
@@ -30,6 +30,26 @@ import type {
 } from "./types";
 
 const win = getCurrentWindow();
+
+const TAB_GROUPS_KEY = "knock.layout.tabGroups";
+
+function loadTabGroups(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(TAB_GROUPS_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, string[]>;
+  } catch {
+    /* non-fatal */
+  }
+  return {};
+}
+
+function persistTabGroups(groups: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(TAB_GROUPS_KEY, JSON.stringify(groups));
+  } catch {
+    /* non-fatal */
+  }
+}
 
 function collectChildBases(
   entries: TreeEntry[],
@@ -91,6 +111,8 @@ export function App() {
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
   const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [primaryRoot, setPrimaryRoot] = useState<string | null>(null);
+  const tabGroupsRef = useRef<Record<string, string[]>>(loadTabGroups());
   const [tabMeta, setTabMeta] = useState<Record<string, { name: string | null; color?: string | null; icon?: string | null }>>({});
   const [showTabPicker, setShowTabPicker] = useState(false);
   const [tabRecents, setTabRecents] = useState<RecentEntry[]>([]);
@@ -115,7 +137,39 @@ export function App() {
   const [responseWidth, setResponseWidth] = usePersistedNumber("knock.layout.response", 480);
   const [toolsWidth, setToolsWidth] = usePersistedNumber("knock.layout.tools", 320);
   const [activeTool, setActiveTool] = usePersistedString<ToolKey>("knock.layout.toolsTab", null);
+  const [uiScaleRaw, setUiScaleRaw] = usePersistedNumber("knock.ui.scale", 1);
+  const uiScale = clampScale(uiScaleRaw);
+  const setUiScale = (v: number) => setUiScaleRaw(clampScale(v));
   const { pending: confirmPending, confirm, resolve: resolveConfirm } = useConfirm();
+
+  useEffect(() => {
+    const el = document.documentElement as HTMLElement & { style: CSSStyleDeclaration & { zoom?: string } };
+    el.style.zoom = String(uiScale);
+    el.style.setProperty("--ui-zoom", String(uiScale));
+    return () => {
+      el.style.zoom = "";
+      el.style.removeProperty("--ui-zoom");
+    };
+  }, [uiScale]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        setUiScale(uiScale + SCALE_STEP);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        setUiScale(uiScale - SCALE_STEP);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        setUiScale(1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [uiScale]);
 
   function clampWidth(v: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, v));
@@ -163,11 +217,6 @@ export function App() {
         ...prev,
         [info.root]: { name: info.name, color: info.color, icon: info.icon },
       }));
-      // Auto-add to tabs only when there are already other tabs (multi-tab session).
-      setOpenTabs((prev) => {
-        if (prev.length === 0) return prev;
-        return prev.includes(info.root) ? prev : [...prev, info.root];
-      });
       if (active) await refreshEnvVars(info.root, active);
     } catch (e) {
       setError(String(e));
@@ -258,15 +307,25 @@ export function App() {
     await openWorkspaceAt(picked);
   }
 
-  async function openWorkspaceAt(path: string) {
-    if (switchToTab(path)) return;
+  async function openWorkspaceAt(path: string, source: "primary" | "secondary" = "primary") {
+    if (switchToTab(path)) {
+      if (source === "primary") rebindPrimary(path);
+      return;
+    }
     setError(null);
     try {
       const info = await invoke<WorkspaceInfo>("open_workspace", { path });
+      if (source === "primary") rebindPrimary(info.root);
       await loadWorkspace(info);
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  function rebindPrimary(root: string) {
+    setPrimaryRoot(root);
+    const group = tabGroupsRef.current[root] ?? [];
+    setOpenTabs(group);
   }
 
   const isRequest = selected?.startsWith("requests/") ?? false;
@@ -420,6 +479,7 @@ export function App() {
             onCancel={() => setShowNew(false)}
             onCreated={async (info) => {
               setShowNew(false);
+              rebindPrimary(info.root);
               await loadWorkspace(info);
             }}
           />
@@ -431,7 +491,7 @@ export function App() {
             onCancel={() => resolveConfirm(false)}
           />
         )}
-        <Statusbar />
+        <Statusbar scale={uiScale} onScaleChange={setUiScale} />
       </div>
     );
   }
@@ -486,7 +546,7 @@ export function App() {
                 }
                 onClick={async () => {
                   if (isActive) return;
-                  await openWorkspaceAt(root);
+                  await openWorkspaceAt(root, "secondary");
                 }}
               >
                 {meta?.icon && <span className="workspace-icon">{meta.icon}</span>}
@@ -496,7 +556,18 @@ export function App() {
                   title="Close tab"
                   onClick={(ev) => {
                     ev.stopPropagation();
-                    setOpenTabs((prev) => prev.filter((r) => r !== root));
+                    setOpenTabs((prev) => {
+                      const next = prev.filter((r) => r !== root);
+                      if (primaryRoot) {
+                        if (next.length === 0) {
+                          delete tabGroupsRef.current[primaryRoot];
+                        } else {
+                          tabGroupsRef.current[primaryRoot] = next;
+                        }
+                        persistTabGroups(tabGroupsRef.current);
+                      }
+                      return next;
+                    });
                     delete tabStatesRef.current[root];
                     setTabMeta((prev) => {
                       const next = { ...prev };
@@ -506,7 +577,7 @@ export function App() {
                     if (isActive) {
                       const remaining = openTabs.filter((r) => r !== root);
                       if (remaining.length > 0) {
-                        openWorkspaceAt(remaining[remaining.length - 1]);
+                        openWorkspaceAt(remaining[remaining.length - 1], "secondary");
                       } else {
                         setWorkspace(null);
                         setSelected(null);
@@ -563,13 +634,18 @@ export function App() {
                           onClick={async () => {
                             setShowTabPicker(false);
                             const activeRoot = workspace?.root;
+                            const primary = primaryRoot ?? activeRoot ?? null;
                             setOpenTabs((prev) => {
                               const next = [...prev];
                               if (activeRoot && !next.includes(activeRoot)) next.push(activeRoot);
                               if (!next.includes(r.root)) next.push(r.root);
+                              if (primary) {
+                                tabGroupsRef.current[primary] = next;
+                                persistTabGroups(tabGroupsRef.current);
+                              }
                               return next;
                             });
-                            await openWorkspaceAt(r.root);
+                            await openWorkspaceAt(r.root, "secondary");
                           }}
                         >
                           {r.icon && <span className="workspace-icon">{r.icon}</span>}
@@ -1020,6 +1096,7 @@ export function App() {
           onCancel={() => setShowNew(false)}
           onCreated={async (info) => {
             setShowNew(false);
+            rebindPrimary(info.root);
             await loadWorkspace(info);
           }}
         />
@@ -1093,6 +1170,8 @@ export function App() {
         workspaceName={workspace.name}
         envName={workspace.activeEnv}
         hint={error ? null : selected ?? null}
+        scale={uiScale}
+        onScaleChange={setUiScale}
       />
     </div>
   );

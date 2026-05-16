@@ -6,6 +6,42 @@ interface Props {
   workspaceName?: string | null;
   envName?: string | null;
   hint?: string | null;
+  scale?: number;
+  onScaleChange?: (v: number) => void;
+}
+
+export const SCALE_MIN = 0.7;
+export const SCALE_MAX = 1.8;
+export const SCALE_STEP = 0.1;
+
+export function clampScale(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(SCALE_MAX, Math.max(SCALE_MIN, Math.round(v * 100) / 100));
+}
+
+function ZoomControl({ scale, onChange }: { scale: number; onChange: (v: number) => void }) {
+  const pct = Math.round(scale * 100);
+  return (
+    <div className="statusbar-item zoom" title="UI text size (Cmd/Ctrl +/-/0)">
+      <button
+        className="zoom-btn"
+        onClick={() => onChange(clampScale(scale - SCALE_STEP))}
+        disabled={scale <= SCALE_MIN + 1e-3}
+        aria-label="Decrease text size"
+      >−</button>
+      <button
+        className="zoom-pct"
+        onClick={() => onChange(1)}
+        title="Reset to 100%"
+      >{pct}%</button>
+      <button
+        className="zoom-btn"
+        onClick={() => onChange(clampScale(scale + SCALE_STEP))}
+        disabled={scale >= SCALE_MAX - 1e-3}
+        aria-label="Increase text size"
+      >+</button>
+    </div>
+  );
 }
 
 const REPO = "jairoFernandez/knock";
@@ -81,7 +117,7 @@ function PerfBadge() {
   );
 }
 
-export function Statusbar({ workspaceRoot, workspaceName, envName, hint }: Props) {
+export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, onScaleChange }: Props) {
   const [meta, setMeta] = useState<RepoMeta>({ stars: null });
 
   useEffect(() => {
@@ -130,6 +166,9 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint }: Props
         {hint && <span className="statusbar-item dim">{hint}</span>}
       </div>
       <div className="statusbar-right">
+        {scale !== undefined && onScaleChange && (
+          <ZoomControl scale={scale} onChange={onScaleChange} />
+        )}
         <PerfBadge />
         <button
           className="statusbar-item link"
