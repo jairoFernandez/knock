@@ -50,6 +50,7 @@ pub fn run() {
             commands::list_folder_orders,
             commands::update_request_method,
             commands::update_request_name,
+            commands::get_system_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,6 +15,72 @@ interface RepoMeta {
   stars: number | null;
 }
 
+interface SystemStats {
+  cpuPercent: number;
+  memUsed: number;
+  memTotal: number;
+  appMem: number;
+  appCpu: number;
+  cores: number;
+}
+
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  const kb = b / 1024;
+  if (kb < 1024) return `${kb.toFixed(0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+function PerfBadge() {
+  const [expanded, setExpanded] = useState(false);
+  const [stats, setStats] = useState<SystemStats | null>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const s = await invoke<SystemStats>("get_system_stats");
+        if (!cancelled) setStats(s);
+      } catch {
+        /* non-fatal */
+      }
+    }
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [expanded]);
+
+  return (
+    <button
+      className={`statusbar-item perf${expanded ? " expanded" : ""}`}
+      onClick={() => setExpanded((v) => !v)}
+      title={expanded ? "Hide system stats" : "Show system stats"}
+    >
+      <span className="perf-glyph">{expanded ? "▾" : "▸"}</span>
+      <span>perf</span>
+      {expanded && stats && (
+        <>
+          <span className="perf-stat">
+            cpu {stats.cpuPercent.toFixed(0)}%
+          </span>
+          <span className="perf-stat">
+            mem {fmtBytes(stats.memUsed)}/{fmtBytes(stats.memTotal)}
+          </span>
+          <span className="perf-stat">
+            app {fmtBytes(stats.appMem)} · {stats.appCpu.toFixed(0)}%
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
+
 export function Statusbar({ workspaceRoot, workspaceName, envName, hint }: Props) {
   const [meta, setMeta] = useState<RepoMeta>({ stars: null });
 
@@ -64,6 +130,7 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint }: Props
         {hint && <span className="statusbar-item dim">{hint}</span>}
       </div>
       <div className="statusbar-right">
+        <PerfBadge />
         <button
           className="statusbar-item link"
           onClick={openRepo}

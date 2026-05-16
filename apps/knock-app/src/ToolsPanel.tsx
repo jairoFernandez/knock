@@ -1,44 +1,98 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { highlightJson } from "./jsonHighlight";
 
-export type ToolKey = "base64" | "jwt" | "url" | "random" | "date";
+import { HashTool } from "./tools/HashTool";
+import { HmacTool } from "./tools/HmacTool";
+import { JsonTool } from "./tools/JsonTool";
+import { UrlParserTool } from "./tools/UrlParserTool";
+import { RegexTool } from "./tools/RegexTool";
+import { NumberBaseTool } from "./tools/NumberBaseTool";
+import { HexAsciiTool } from "./tools/HexAsciiTool";
+import { DiffTool } from "./tools/DiffTool";
+import { CurlTool } from "./tools/CurlTool";
+import { IpTool } from "./tools/IpTool";
+import { CronTool } from "./tools/CronTool";
+import { UserAgentTool } from "./tools/UserAgentTool";
+import { MockDataTool } from "./tools/MockDataTool";
+import { ColorTool } from "./tools/ColorTool";
+import { UnitTool } from "./tools/UnitTool";
+import { GraphqlTool } from "./tools/GraphqlTool";
+import { JwkTool } from "./tools/JwkTool";
+import { ToolsDashboard } from "./tools/ToolsDashboard";
+import { TOOL_MAP, type ToolKey } from "./tools/registry";
+
+export type { ToolKey } from "./tools/registry";
 
 interface Props {
   tool: ToolKey;
   onClose: () => void;
+  onNavigate: (next: ToolKey) => void;
 }
-
-const TITLES: Record<ToolKey, string> = {
-  base64: "Base64",
-  jwt: "JWT",
-  url: "URL encode",
-  random: "Random",
-  date: "Date",
-};
 
 const MAX_HISTORY = 20;
 
-export function ToolsPanel({ tool, onClose }: Props) {
+export function ToolsPanel({ tool, onClose, onNavigate }: Props) {
+  const def = TOOL_MAP[tool];
+  const [helpOpen, setHelpOpen] = useState(false);
   return (
     <div className="panel tools-panel">
       <div className="panel-header tools-header">
-        <span>{TITLES[tool]}</span>
-        <button
-          className="tools-close"
-          onClick={onClose}
-          title="Close panel"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 2 L10 10 M10 2 L2 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-        </button>
+        <span>{def?.title ?? tool}</span>
+        <div className="tools-header-actions">
+          {tool !== "dashboard" && (
+            <button
+              className="tools-close"
+              onClick={() => setHelpOpen((v) => !v)}
+              title="Help"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M6 5.2c0-.8.6-1.4 1.3-1.4s1.2.5 1.2 1.2c0 1-1.5 1.1-1.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+                <circle cx="6.5" cy="9" r="0.6" fill="currentColor" />
+              </svg>
+            </button>
+          )}
+          <button
+            className="tools-close"
+            onClick={onClose}
+            title="Close panel"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 2 L10 10 M10 2 L2 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
       <div className="tools-body">
+        {helpOpen && def && (
+          <div className="tools-help">
+            <strong>{def.title}</strong>
+            <p>{def.description}</p>
+          </div>
+        )}
+        {tool === "dashboard" && <ToolsDashboard onOpen={onNavigate} />}
         {tool === "base64" && <Base64Tool />}
         {tool === "jwt" && <JwtTool />}
         {tool === "url" && <UrlTool />}
         {tool === "random" && <RandomTool />}
         {tool === "date" && <DateTool />}
+        {tool === "hash" && <HashTool />}
+        {tool === "hmac" && <HmacTool />}
+        {tool === "json" && <JsonTool />}
+        {tool === "urlparse" && <UrlParserTool />}
+        {tool === "regex" && <RegexTool />}
+        {tool === "numbase" && <NumberBaseTool />}
+        {tool === "hexascii" && <HexAsciiTool />}
+        {tool === "diff" && <DiffTool />}
+        {tool === "curl" && <CurlTool />}
+        {tool === "ip" && <IpTool />}
+        {tool === "cron" && <CronTool />}
+        {tool === "ua" && <UserAgentTool />}
+        {tool === "mock" && <MockDataTool />}
+        {tool === "color" && <ColorTool />}
+        {tool === "unit" && <UnitTool />}
+        {tool === "gql" && <GraphqlTool />}
+        {tool === "jwk" && <JwkTool />}
       </div>
     </div>
   );
@@ -512,7 +566,7 @@ function UrlTool() {
 
 /* ---------- Random ---------- */
 
-type RandomMode = "uuid" | "hex" | "base64" | "password";
+type RandomMode = "uuid" | "uuidv7" | "hex" | "base64" | "password";
 
 function RandomTool() {
   const [mode, setMode] = usePersistedField<RandomMode>("knock.tools.random.mode", "uuid");
@@ -529,13 +583,13 @@ function RandomTool() {
   return (
     <>
       <div className="tools-tabs tools-tabs-wrap">
-        {(["uuid", "hex", "base64", "password"] as RandomMode[]).map((m) => (
+        {(["uuid", "uuidv7", "hex", "base64", "password"] as RandomMode[]).map((m) => (
           <button key={m} className={mode === m ? "active" : ""} onClick={() => setMode(m)}>
             {m}
           </button>
         ))}
       </div>
-      {mode !== "uuid" && (
+      {mode !== "uuid" && mode !== "uuidv7" && (
         <div className="tools-row">
           <label className="tools-label" style={{ flex: 1 }}>
             Length
@@ -575,6 +629,23 @@ function genRandom(mode: RandomMode, length: number): string {
     }
     const bytes = randomBytes(16);
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  if (mode === "uuidv7") {
+    const ms = Date.now();
+    const bytes = randomBytes(16);
+    // Time (48 bits big-endian)
+    bytes[0] = (ms / 2 ** 40) & 0xff;
+    bytes[1] = (ms / 2 ** 32) & 0xff;
+    bytes[2] = (ms / 2 ** 24) & 0xff;
+    bytes[3] = (ms / 2 ** 16) & 0xff;
+    bytes[4] = (ms / 2 ** 8) & 0xff;
+    bytes[5] = ms & 0xff;
+    // Version 7
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    // Variant
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -20,7 +20,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ColorPicker } from "./ColorPicker";
 import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
 import { Statusbar } from "./Statusbar";
-import type { DirEntryDto } from "./types";
+import type { DirEntryDto, RecentEntry } from "./types";
 import type {
   KV,
   RequestForm,
@@ -90,6 +90,25 @@ export function App() {
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [tabMeta, setTabMeta] = useState<Record<string, { name: string | null; color?: string | null; icon?: string | null }>>({});
+  const [showTabPicker, setShowTabPicker] = useState(false);
+  const [tabRecents, setTabRecents] = useState<RecentEntry[]>([]);
+  interface TabState {
+    workspace: WorkspaceInfo;
+    entries: TreeEntry[];
+    directories: string[];
+    colors: Record<string, string>;
+    folderOrders: Record<string, string[]>;
+    envs: string[];
+    envVars: KV[];
+    selected: string | null;
+    form: RequestForm | null;
+    rawContent: string;
+    runs: Record<string, { response: ResponseDto; at: number }[]>;
+    viewIdx: Record<string, number>;
+  }
+  const tabStatesRef = useRef<Record<string, TabState>>({});
   const [colorTarget, setColorTarget] = useState<string | null>(null);
   const [showAppearance, setShowAppearance] = useState(false);
   const [sidebarWidth, setSidebarWidth] = usePersistedNumber("knock.layout.sidebar", 260);
@@ -140,6 +159,15 @@ export function App() {
       }
       const next = { ...info, activeEnv: active };
       setWorkspace(next);
+      setTabMeta((prev) => ({
+        ...prev,
+        [info.root]: { name: info.name, color: info.color, icon: info.icon },
+      }));
+      // Auto-add to tabs only when there are already other tabs (multi-tab session).
+      setOpenTabs((prev) => {
+        if (prev.length === 0) return prev;
+        return prev.includes(info.root) ? prev : [...prev, info.root];
+      });
       if (active) await refreshEnvVars(info.root, active);
     } catch (e) {
       setError(String(e));
@@ -185,6 +213,44 @@ export function App() {
     }
   }
 
+  // Snapshot active tab state every render so switching restores instantly.
+  useEffect(() => {
+    if (!workspace) return;
+    tabStatesRef.current[workspace.root] = {
+      workspace,
+      entries,
+      directories,
+      colors,
+      folderOrders,
+      envs,
+      envVars,
+      selected,
+      form,
+      rawContent,
+      runs,
+      viewIdx,
+    };
+  });
+
+  function switchToTab(root: string) {
+    const cached = tabStatesRef.current[root];
+    if (!cached) return false;
+    setWorkspace(cached.workspace);
+    setEntries(cached.entries);
+    setDirectories(cached.directories);
+    setColors(cached.colors);
+    setFolderOrders(cached.folderOrders);
+    setEnvs(cached.envs);
+    setEnvVars(cached.envVars);
+    setSelected(cached.selected);
+    setForm(cached.form);
+    setRawContent(cached.rawContent);
+    setRuns(cached.runs);
+    setViewIdx(cached.viewIdx);
+    setError(null);
+    return true;
+  }
+
   async function openWorkspace() {
     setError(null);
     const picked = await open({ directory: true, multiple: false });
@@ -193,6 +259,7 @@ export function App() {
   }
 
   async function openWorkspaceAt(path: string) {
+    if (switchToTab(path)) return;
     setError(null);
     try {
       const info = await invoke<WorkspaceInfo>("open_workspace", { path });
@@ -340,6 +407,7 @@ export function App() {
             <ToolsPanel
               tool={activeTool}
               onClose={() => setActiveTool(null)}
+              onNavigate={(next) => setActiveTool(next)}
             />
           </>
         )}
@@ -401,21 +469,153 @@ export function App() {
         <h1 data-tauri-drag-region>KNOCK</h1>
         <button onClick={() => setShowNew(true)}>New…</button>
         <button onClick={openWorkspace}>Open…</button>
-        {workspace && (
-          <button
-            className="workspace-name"
-            title={`${workspace.root}\nClick to customize color & icon`}
-            onClick={() => setShowAppearance(true)}
-            style={
-              workspace.color
-                ? { background: workspace.color, color: "#fff", borderColor: workspace.color }
-                : undefined
-            }
-          >
-            {workspace.icon && <span className="workspace-icon">{workspace.icon}</span>}
-            <span>{workspace.name || workspace.root.split("/").pop() || workspace.root}</span>
-          </button>
-        )}
+        <div className="ws-tabs">
+          {openTabs.map((root) => {
+            const isActive = workspace?.root === root;
+            const meta = tabMeta[root];
+            const label = meta?.name || root.split("/").pop() || root;
+            return (
+              <div
+                key={root}
+                className={`ws-tab${isActive ? " active" : ""}`}
+                title={root}
+                style={
+                  isActive && meta?.color
+                    ? { background: meta.color, color: "#fff", borderColor: meta.color }
+                    : undefined
+                }
+                onClick={async () => {
+                  if (isActive) return;
+                  await openWorkspaceAt(root);
+                }}
+              >
+                {meta?.icon && <span className="workspace-icon">{meta.icon}</span>}
+                <span className="ws-tab-label">{label}</span>
+                <button
+                  className="ws-tab-close"
+                  title="Close tab"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setOpenTabs((prev) => prev.filter((r) => r !== root));
+                    delete tabStatesRef.current[root];
+                    setTabMeta((prev) => {
+                      const next = { ...prev };
+                      delete next[root];
+                      return next;
+                    });
+                    if (isActive) {
+                      const remaining = openTabs.filter((r) => r !== root);
+                      if (remaining.length > 0) {
+                        openWorkspaceAt(remaining[remaining.length - 1]);
+                      } else {
+                        setWorkspace(null);
+                        setSelected(null);
+                        setForm(null);
+                      }
+                    }
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+          <div className="ws-tab-add-wrap" data-tauri-drag-region="false">
+            <button
+              className="ws-tab-add"
+              data-tauri-drag-region="false"
+              title="Open another workspace"
+              onClick={async () => {
+                if (showTabPicker) {
+                  setShowTabPicker(false);
+                  return;
+                }
+                try {
+                  const r = await invoke<import("./types").RecentEntry[]>("list_recents");
+                  setTabRecents(r);
+                } catch {
+                  setTabRecents([]);
+                }
+                setShowTabPicker(true);
+              }}
+            >
+              +
+            </button>
+            {showTabPicker && (
+              <>
+                <div
+                  className="tab-picker-backdrop"
+                  onClick={() => setShowTabPicker(false)}
+                />
+                <div className="tab-picker">
+                  <div className="tab-picker-section">
+                    <div className="tab-picker-label">Recent workspaces</div>
+                    {tabRecents.filter((r) => r.root !== workspace?.root && !openTabs.includes(r.root)).length === 0 && (
+                      <div className="tab-picker-empty">No more recents</div>
+                    )}
+                    {tabRecents
+                      .filter((r) => r.root !== workspace?.root && !openTabs.includes(r.root))
+                      .map((r) => (
+                        <button
+                          key={r.root}
+                          className="tab-picker-item"
+                          title={r.root}
+                          onClick={async () => {
+                            setShowTabPicker(false);
+                            const activeRoot = workspace?.root;
+                            setOpenTabs((prev) => {
+                              const next = [...prev];
+                              if (activeRoot && !next.includes(activeRoot)) next.push(activeRoot);
+                              if (!next.includes(r.root)) next.push(r.root);
+                              return next;
+                            });
+                            await openWorkspaceAt(r.root);
+                          }}
+                        >
+                          {r.icon && <span className="workspace-icon">{r.icon}</span>}
+                          <span className="tab-picker-name">
+                            {r.name || r.root.split("/").pop()}
+                          </span>
+                          <span className="tab-picker-path">{r.root}</span>
+                        </button>
+                      ))}
+                  </div>
+                  <div className="tab-picker-divider" />
+                  <button
+                    className="tab-picker-item action"
+                    onClick={() => {
+                      setShowTabPicker(false);
+                      const activeRoot = workspace?.root;
+                      if (activeRoot) {
+                        setOpenTabs((prev) =>
+                          prev.includes(activeRoot) ? prev : [...prev, activeRoot],
+                        );
+                      }
+                      openWorkspace();
+                    }}
+                  >
+                    Open folder…
+                  </button>
+                  <button
+                    className="tab-picker-item action"
+                    onClick={() => {
+                      setShowTabPicker(false);
+                      const activeRoot = workspace?.root;
+                      if (activeRoot) {
+                        setOpenTabs((prev) =>
+                          prev.includes(activeRoot) ? prev : [...prev, activeRoot],
+                        );
+                      }
+                      setShowNew(true);
+                    }}
+                  >
+                    New workspace…
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
         <div className="topbar-spacer" data-tauri-drag-region />
         {workspace && envs.length > 0 && (
           <select
@@ -805,6 +1005,7 @@ export function App() {
           <ToolsPanel
             tool={activeTool}
             onClose={() => setActiveTool(null)}
+            onNavigate={(next) => setActiveTool(next)}
           />
         </>
       )}

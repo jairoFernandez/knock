@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use knock_core::{execute, init_at, parser, resolve, Workspace};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1528,4 +1528,59 @@ fn safe_join(root: &str, rel: &str) -> Result<PathBuf, String> {
         return Err(format!("path '{rel}' escapes workspace"));
     }
     Ok(canonical)
+}
+
+// ---------- system stats ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemStats {
+    pub cpu_percent: f32,
+    pub mem_used: u64,
+    pub mem_total: u64,
+    pub app_mem: u64,
+    pub app_cpu: f32,
+    pub cores: usize,
+}
+
+fn sysinfo_state() -> &'static Mutex<sysinfo::System> {
+    static S: OnceLock<Mutex<sysinfo::System>> = OnceLock::new();
+    S.get_or_init(|| {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+        Mutex::new(sys)
+    })
+}
+
+#[tauri::command]
+pub fn get_system_stats() -> Result<SystemStats, String> {
+    let mut sys = sysinfo_state().lock().map_err(|e| e.to_string())?;
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    let pid = sysinfo::get_current_pid().ok();
+    if let Some(pid) = pid {
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            true,
+            sysinfo::ProcessRefreshKind::new()
+                .with_cpu()
+                .with_memory(),
+        );
+    }
+    let cpu_percent = sys.global_cpu_usage();
+    let cores = sys.cpus().len();
+    let mem_used = sys.used_memory();
+    let mem_total = sys.total_memory();
+    let (app_mem, app_cpu) = pid
+        .and_then(|p| sys.process(p))
+        .map(|p| (p.memory(), p.cpu_usage()))
+        .unwrap_or((0, 0.0));
+    Ok(SystemStats {
+        cpu_percent,
+        mem_used,
+        mem_total,
+        app_mem,
+        app_cpu,
+        cores,
+    })
 }
