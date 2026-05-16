@@ -13,8 +13,11 @@ import { Rail, type RailMode } from "./Rail";
 import { FileBrowser } from "./FileBrowser";
 import { GitPanel } from "./GitPanel";
 import { Splitter } from "./Splitter";
-import { usePersistedNumber } from "./hooks";
+import { usePersistedNumber, useConfirm } from "./hooks";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ColorPicker } from "./ColorPicker";
+import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
+import { Statusbar } from "./Statusbar";
 import type { DirEntryDto } from "./types";
 import type {
   KV,
@@ -42,13 +45,16 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showNewEntry, setShowNewEntry] = useState<false | "request" | "fragment" | "flow" | "environment" | "folder">(false);
+  const [newEntryPath, setNewEntryPath] = useState<string>("");
   const [railMode, setRailMode] = useState<RailMode>("workspace");
   const [filesRefreshToken, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
   const [colorTarget, setColorTarget] = useState<string | null>(null);
+  const [showAppearance, setShowAppearance] = useState(false);
   const [sidebarWidth, setSidebarWidth] = usePersistedNumber("knock.layout.sidebar", 260);
   const [responseWidth, setResponseWidth] = usePersistedNumber("knock.layout.response", 480);
+  const { pending: confirmPending, confirm, resolve: resolveConfirm } = useConfirm();
 
   function clampWidth(v: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, v));
@@ -160,6 +166,19 @@ export function App() {
         .then(setForm)
         .catch((e) => setError(String(e)));
       setRawContent("");
+      if (!runs[selected]) {
+        invoke<{ at: number; response: ResponseDto }[]>("load_history", {
+          root: workspace.root,
+          rel: selected,
+        })
+          .then((entries) => {
+            if (entries.length === 0) return;
+            setRuns((r) => (r[selected] ? r : { ...r, [selected]: entries }));
+          })
+          .catch(() => {
+            /* non-fatal */
+          });
+      }
     } else {
       invoke<string>("read_file", { root: workspace.root, rel: selected })
         .then((content) => {
@@ -261,6 +280,7 @@ export function App() {
           onPickDirectory={openWorkspace}
           onCreate={() => setShowNew(true)}
           onLoadInfo={loadWorkspace}
+          confirm={confirm}
         />
         {showNew && (
           <NewWorkspaceModal
@@ -271,16 +291,29 @@ export function App() {
             }}
           />
         )}
+        {confirmPending && (
+          <ConfirmDialog
+            {...confirmPending}
+            onConfirm={() => resolveConfirm(true)}
+            onCancel={() => resolveConfirm(false)}
+          />
+        )}
+        <Statusbar />
       </div>
     );
   }
 
+  const appStyle: React.CSSProperties = {
+    gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px`,
+  };
+  if (workspace.color) {
+    (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
+  }
+
   return (
     <div
-      className="app"
-      style={{
-        gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px`,
-      }}
+      className={`app${workspace.color ? " has-ws-color" : ""}`}
+      style={appStyle}
     >
       <div className="topbar" data-tauri-drag-region>
         <button
@@ -303,9 +336,19 @@ export function App() {
         <button onClick={() => setShowNew(true)}>New…</button>
         <button onClick={openWorkspace}>Open…</button>
         {workspace && (
-          <span className="workspace-name" title={workspace.root} data-tauri-drag-region>
-            {workspace.name || workspace.root.split("/").pop() || workspace.root}
-          </span>
+          <button
+            className="workspace-name"
+            title={`${workspace.root}\nClick to customize color & icon`}
+            onClick={() => setShowAppearance(true)}
+            style={
+              workspace.color
+                ? { background: workspace.color, color: "#fff", borderColor: workspace.color }
+                : undefined
+            }
+          >
+            {workspace.icon && <span className="workspace-icon">{workspace.icon}</span>}
+            <span>{workspace.name || workspace.root.split("/").pop() || workspace.root}</span>
+          </button>
         )}
         <div className="topbar-spacer" data-tauri-drag-region />
         {workspace && envs.length > 0 && (
@@ -360,7 +403,12 @@ export function App() {
                 onSelect={setSelected}
                 onDelete={async (path) => {
                   if (!workspace) return;
-                  if (!confirm(`Delete ${path}?`)) return;
+                  const ok = await confirm({
+                    title: "Delete file",
+                    message: `Delete ${path}? This cannot be undone.`,
+                    confirmLabel: "Delete",
+                  });
+                  if (!ok) return;
                   try {
                     await invoke("delete_entry", { root: workspace.root, rel: path });
                     if (selected === path) {
@@ -394,10 +442,32 @@ export function App() {
                   }
                 }}
                 onSetColor={(dirPath) => setColorTarget(dirPath)}
-                onAddInSection={(kind) => setShowNewEntry(kind)}
+                onAddInSection={(kind) => {
+                  setNewEntryPath("");
+                  setShowNewEntry(kind);
+                }}
+                onAddInFolder={(folderPath) => {
+                  const top = folderPath.split("/")[0];
+                  const kindMap: Record<string, "request" | "flow" | "fragment" | "environment"> = {
+                    requests: "request",
+                    flows: "flow",
+                    fragments: "fragment",
+                    environments: "environment",
+                  };
+                  const kind = kindMap[top];
+                  if (!kind) return;
+                  const rest = folderPath.slice(top.length + 1);
+                  setNewEntryPath(rest ? `${rest}/` : "");
+                  setShowNewEntry(kind);
+                }}
                 onDeleteFolder={async (path) => {
                   if (!workspace) return;
-                  if (!confirm(`Delete folder ${path} and all its contents?`)) return;
+                  const ok = await confirm({
+                    title: "Delete folder",
+                    message: `Delete folder ${path} and all its contents? This cannot be undone.`,
+                    confirmLabel: "Delete folder",
+                  });
+                  if (!ok) return;
                   try {
                     await invoke("delete_folder", { root: workspace.root, rel: path });
                     if (selected && (selected === path || selected.startsWith(`${path}/`))) {
@@ -506,8 +576,23 @@ export function App() {
               if (!selected) return;
               setViewIdx((v) => ({ ...v, [selected]: idx }));
             }}
-            onClearHistory={() => {
+            onClearHistory={async () => {
               if (!selected) return;
+              const ok = await confirm({
+                title: "Clear history",
+                message: "Clear all stored runs for this request?",
+                confirmLabel: "Clear",
+              });
+              if (!ok) return;
+              try {
+                await invoke("clear_history", {
+                  root: workspace!.root,
+                  rel: selected,
+                });
+              } catch (e) {
+                setError(String(e));
+                return;
+              }
               setRuns((r) => {
                 const next = { ...r };
                 delete next[selected];
@@ -537,9 +622,14 @@ export function App() {
         <NewEntryModal
           root={workspace.root}
           initialKind={showNewEntry}
-          onCancel={() => setShowNewEntry(false)}
+          initialPath={newEntryPath}
+          onCancel={() => {
+            setShowNewEntry(false);
+            setNewEntryPath("");
+          }}
           onCreated={async (rel, kind) => {
             setShowNewEntry(false);
+            setNewEntryPath("");
             await refreshTree(workspace.root);
             if (kind !== "folder") setSelected(rel);
           }}
@@ -571,6 +661,32 @@ export function App() {
           />
         </div>
       )}
+
+      {showAppearance && workspace && (
+        <WorkspaceAppearanceModal
+          root={workspace.root}
+          current={{ color: workspace.color, icon: workspace.icon }}
+          onCancel={() => setShowAppearance(false)}
+          onSaved={(next) => {
+            setShowAppearance(false);
+            setWorkspace({ ...workspace, color: next.color, icon: next.icon });
+          }}
+        />
+      )}
+
+      {confirmPending && (
+        <ConfirmDialog
+          {...confirmPending}
+          onConfirm={() => resolveConfirm(true)}
+          onCancel={() => resolveConfirm(false)}
+        />
+      )}
+      <Statusbar
+        workspaceRoot={workspace.root}
+        workspaceName={workspace.name}
+        envName={workspace.activeEnv}
+        hint={error ? null : selected ?? null}
+      />
     </div>
   );
 }

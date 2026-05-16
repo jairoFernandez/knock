@@ -2,6 +2,8 @@ export interface WorkspaceInfo {
   root: string;
   name: string | null;
   activeEnv: string | null;
+  color?: string | null;
+  icon?: string | null;
 }
 
 export type EntryKind =
@@ -57,6 +59,8 @@ export interface RecentEntry {
   root: string;
   name: string | null;
   lastOpened: number;
+  color?: string | null;
+  icon?: string | null;
 }
 
 export interface FileEntry {
@@ -90,6 +94,12 @@ export interface GitStateDto {
   changes: WorkingChangeDto[];
   stagedCount: number;
   unstagedCount: number;
+  upstream?: string | null;
+  ahead: number;
+  behind: number;
+  lastCommitSubject?: string | null;
+  lastCommitAt?: number | null;
+  lastCommitShort?: string | null;
 }
 
 

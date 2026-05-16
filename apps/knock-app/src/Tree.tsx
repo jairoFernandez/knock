@@ -14,6 +14,7 @@ interface TreeProps {
   onRename?: (path: string) => void;
   onSetColor?: (dirPath: string) => void;
   onAddInSection?: (kind: SectionKind) => void;
+  onAddInFolder?: (folderPath: string) => void;
 }
 
 const SECTIONS: { kind: SectionKind; dir: string; label: string }[] = [
@@ -102,6 +103,7 @@ interface RenderState {
   onDeleteFolder?: (path: string) => void;
   onRename?: (path: string) => void;
   onSetColor?: (path: string) => void;
+  onAddInFolder?: (path: string) => void;
   colors: Record<string, string>;
 }
 
@@ -179,6 +181,18 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
           </span>
           <span className="tree-label">{child.name}</span>
           <div className="tree-row-actions">
+            {state.onAddInFolder && (
+              <button
+                className="tree-action"
+                title="New entry in this folder"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  state.onAddInFolder!(child.path);
+                }}
+              >
+                +
+              </button>
+            )}
             {state.onSetColor && (
               <button
                 className="tree-action tree-color"
@@ -238,6 +252,7 @@ export function Tree({
   onRename,
   onSetColor,
   onAddInSection,
+  onAddInFolder,
 }: TreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (path: string) =>
@@ -257,6 +272,7 @@ export function Tree({
     onDeleteFolder,
     onRename,
     onSetColor,
+    onAddInFolder,
     colors,
   };
 

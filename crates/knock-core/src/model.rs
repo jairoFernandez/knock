@@ -6,6 +6,8 @@ use std::time::Duration;
 pub struct WorkspaceConfig {
     pub name: Option<String>,
     pub default_env: Option<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

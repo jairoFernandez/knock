@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { RecentEntry, WorkspaceInfo } from "./types";
+import type { ConfirmOptions } from "./ConfirmDialog";
 
 interface Props {
   onOpen: (root: string) => void;
   onPickDirectory: () => void;
   onCreate: () => void;
   onLoadInfo?: (info: WorkspaceInfo) => void;
+  confirm?: (opts: ConfirmOptions) => Promise<boolean>;
 }
 
 function timeAgo(unixSecs: number): string {
@@ -25,7 +27,7 @@ function basename(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
-export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Props) {
+export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo, confirm }: Props) {
   const [recents, setRecents] = useState<RecentEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [exampleBusy, setExampleBusy] = useState(false);
@@ -52,6 +54,14 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Pro
   }
 
   async function forget(root: string) {
+    if (confirm) {
+      const ok = await confirm({
+        title: "Remove from recents",
+        message: `Remove ${root} from the recents list? This does not delete the workspace on disk.`,
+        confirmLabel: "Remove",
+      });
+      if (!ok) return;
+    }
     try {
       await invoke("forget_recent", { root });
       setRecents((r) => r.filter((e) => e.root !== root));
@@ -68,7 +78,8 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Pro
           <div className="dashboard-sub">Pick a workspace to start.</div>
         </div>
 
-        <div className="dashboard-grid">
+        <div className="dashboard-section-title">Actions</div>
+        <div className="dashboard-actions">
           <button className="card card-action card-create" onClick={onCreate}>
             <div className="card-icon">+</div>
             <div className="card-title">New workspace</div>
@@ -90,7 +101,10 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Pro
             </div>
             <div className="card-sub">Try a ready-made workspace</div>
           </button>
+        </div>
 
+        <div className="dashboard-section-title">Projects</div>
+        <div className="dashboard-grid">
           {loaded && recents.length === 0 && (
             <div className="card card-placeholder">
               <div className="card-title">No recents yet</div>
@@ -98,37 +112,53 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Pro
             </div>
           )}
 
-          {recents.map((entry) => (
-            <div className="card card-recent" key={entry.root}>
-              <div
-                className="card-clickable"
-                onClick={() => onOpen(entry.root)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") onOpen(entry.root);
-                }}
-              >
-                <div className="card-title" title={entry.name ?? basename(entry.root)}>
-                  {entry.name ?? basename(entry.root)}
+          {recents.map((entry) => {
+            const accent = entry.color || undefined;
+            const cardStyle: React.CSSProperties = accent
+              ? { borderColor: accent, boxShadow: `inset 4px 0 0 0 ${accent}` }
+              : {};
+            return (
+              <div className="card card-recent" key={entry.root} style={cardStyle}>
+                <div
+                  className="card-clickable"
+                  onClick={() => onOpen(entry.root)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onOpen(entry.root);
+                  }}
+                >
+                  <div className="card-recent-head">
+                    {entry.icon && (
+                      <span
+                        className="card-recent-icon"
+                        style={accent ? { color: accent } : undefined}
+                      >
+                        {entry.icon}
+                      </span>
+                    )}
+                    <div className="card-title" title={entry.name ?? basename(entry.root)}>
+                      {entry.name ?? basename(entry.root)}
+                    </div>
+                  </div>
+                  <div className="card-sub" title={entry.root}>
+                    {entry.root}
+                  </div>
+                  <div className="card-meta">opened {timeAgo(entry.lastOpened)}</div>
                 </div>
-                <div className="card-sub" title={entry.root}>
-                  {entry.root}
-                </div>
-                <div className="card-meta">opened {timeAgo(entry.lastOpened)}</div>
+                <button
+                  className="card-forget"
+                  title="Remove from list"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    forget(entry.root);
+                  }}
+                >
+                  ×
+                </button>
               </div>
-              <button
-                className="card-forget"
-                title="Remove from list"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  forget(entry.root);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

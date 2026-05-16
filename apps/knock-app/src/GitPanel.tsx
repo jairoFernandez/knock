@@ -12,6 +12,11 @@ interface Props {
   onOpenFile?: (rel: string) => void;
 }
 
+interface RemoteDto {
+  name: string;
+  url: string;
+}
+
 function commitStatusClass(s: string): string {
   if (s.startsWith("A")) return "added";
   if (s.startsWith("M")) return "modified";
@@ -42,6 +47,14 @@ function relDate(unixSecs: number): string {
   return `${Math.floor(diff / (86400 * 365))}y`;
 }
 
+function shortAgo(msEpoch: number, now: number): string {
+  const diff = Math.floor((now - msEpoch) / 1000);
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
+}
+
 export function GitPanel({ root, onOpenFile }: Props) {
   const [hasGit, setHasGit] = useState<boolean | null>(null);
   const [state, setState] = useState<GitStateDto | null>(null);
@@ -53,6 +66,12 @@ export function GitPanel({ root, onOpenFile }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [remotes, setRemotes] = useState<RemoteDto[]>([]);
+  const [showAddRemote, setShowAddRemote] = useState(false);
+  const [remoteName, setRemoteName] = useState("origin");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -60,12 +79,15 @@ export function GitPanel({ root, onOpenFile }: Props) {
       const ok = await invoke<boolean>("git_status", { root });
       setHasGit(ok);
       if (!ok) return;
-      const [st, log] = await Promise.all([
+      const [st, log, rem] = await Promise.all([
         invoke<GitStateDto>("git_state", { root }),
         invoke<CommitDto[]>("git_log", { root, limit: 50 }),
+        invoke<RemoteDto[]>("git_remotes", { root }).catch(() => [] as RemoteDto[]),
       ]);
       setState(st);
       setCommits(log);
+      setRemotes(rem);
+      setLastRefreshAt(Date.now());
     } catch (e) {
       setError(String(e));
     }
@@ -73,6 +95,16 @@ export function GitPanel({ root, onOpenFile }: Props) {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Tick clock + auto-refresh.
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(tick);
+  }, []);
+  useEffect(() => {
+    const auto = setInterval(() => refresh(), 15000);
+    return () => clearInterval(auto);
   }, [refresh]);
 
   useEffect(() => {
@@ -128,6 +160,37 @@ export function GitPanel({ root, onOpenFile }: Props) {
     }
   }
 
+  async function addRemote() {
+    if (!remoteName.trim() || !remoteUrl.trim()) return;
+    setBusy(true);
+    try {
+      await invoke("git_add_remote", { root, name: remoteName.trim(), url: remoteUrl.trim() });
+      setShowAddRemote(false);
+      setRemoteUrl("");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openFolder() {
+    try {
+      await invoke("open_in_file_manager", { path: root });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function openTerm() {
+    try {
+      await invoke("open_terminal", { path: root });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function commit() {
     if (!message.trim()) return;
     setBusy(true);
@@ -149,15 +212,129 @@ export function GitPanel({ root, onOpenFile }: Props) {
     <div className="git-panel">
       {error && <div className="error">{error}</div>}
 
-      <div className="git-branchline">
-        <span className="git-branch-label">branch</span>
-        <span className="git-branch-name">{state?.branch ?? "—"}</span>
-        <span className="git-staged-info">
-          {state ? `${state.stagedCount} staged · ${state.unstagedCount} dirty` : ""}
-        </span>
-        <button className="git-refresh" onClick={refresh} title="Refresh">
-          ↻
-        </button>
+      <div className="git-statusbar">
+        <div className="git-statusbar-row">
+          <span className="git-branch-label">branch</span>
+          <span className="git-branch-name">{state?.branch ?? "—"}</span>
+          {state?.upstream && (
+            <span className="git-upstream" title={`tracking ${state.upstream}`}>
+              ↦ {state.upstream}
+            </span>
+          )}
+          {state && state.ahead > 0 && (
+            <span className="git-ab ahead" title={`${state.ahead} commit(s) to push`}>
+              ↑{state.ahead}
+            </span>
+          )}
+          {state && state.behind > 0 && (
+            <span className="git-ab behind" title={`${state.behind} commit(s) to pull`}>
+              ↓{state.behind}
+            </span>
+          )}
+          <span className="git-statusbar-actions">
+            <button className="git-refresh" onClick={openFolder} title="Reveal in file manager">⌂</button>
+            <button className="git-refresh" onClick={openTerm} title="Open terminal here">▭</button>
+            <button className="git-refresh" onClick={refresh} title="Refresh">↻</button>
+          </span>
+        </div>
+        <div className="git-statusbar-row sub">
+          {state && state.changes.length === 0 ? (
+            <span className="git-pill clean">✓ clean</span>
+          ) : (
+            <span className="git-pill dirty">
+              {state ? `${state.changes.length} change${state.changes.length === 1 ? "" : "s"}` : ""}
+              {state && state.stagedCount > 0 && (
+                <span className="git-pill-sub"> · {state.stagedCount} staged</span>
+              )}
+            </span>
+          )}
+          {lastRefreshAt && (
+            <span className="git-refresh-time" title={new Date(lastRefreshAt).toLocaleTimeString()}>
+              updated {shortAgo(lastRefreshAt, now)}
+            </span>
+          )}
+        </div>
+        {state?.lastCommitSubject && (
+          <div className="git-statusbar-row last-commit" title={state.lastCommitSubject}>
+            <span className="git-last-label">last</span>
+            {state.lastCommitShort && (
+              <span className="git-last-short">{state.lastCommitShort}</span>
+            )}
+            <span className="git-last-subject">{state.lastCommitSubject}</span>
+            {state.lastCommitAt && (
+              <span className="git-last-when">· {relDate(state.lastCommitAt)}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="git-remotes-section">
+        <div className="section-header git-remotes-header">
+          <span>Remotes · {remotes.length}</span>
+          {!showAddRemote && (
+            <button className="link-btn" onClick={() => setShowAddRemote(true)} disabled={busy}>
+              + Add
+            </button>
+          )}
+        </div>
+        {remotes.length === 0 && !showAddRemote && (
+          <div className="git-remote-empty">
+            <div className="git-remote-empty-msg">
+              No remotes yet. Push your work to GitHub/GitLab/etc.
+            </div>
+            <ol className="git-remote-steps">
+              <li>Create an empty repo on your host (no README/license).</li>
+              <li>Copy its URL (e.g. <code>git@github.com:you/knock-ws.git</code>).</li>
+              <li>Click <b>+ Add</b>, paste the URL, save.</li>
+              <li>Then in a terminal: <code>git push -u origin {state?.branch ?? "main"}</code></li>
+            </ol>
+          </div>
+        )}
+        {remotes.map((r) => (
+          <div className="git-remote-row" key={r.name}>
+            <span className="git-remote-name">{r.name}</span>
+            <span className="git-remote-url" title={r.url}>{r.url}</span>
+          </div>
+        ))}
+        {showAddRemote && (
+          <div className="git-remote-form">
+            <input
+              className="git-remote-input"
+              type="text"
+              value={remoteName}
+              onChange={(e) => setRemoteName(e.target.value)}
+              placeholder="origin"
+            />
+            <input
+              className="git-remote-input wide"
+              type="text"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              placeholder="git@github.com:you/repo.git"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addRemote();
+                else if (e.key === "Escape") setShowAddRemote(false);
+              }}
+            />
+            <div className="git-remote-actions">
+              <button onClick={() => setShowAddRemote(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                className="primary"
+                onClick={addRemote}
+                disabled={busy || !remoteName.trim() || !remoteUrl.trim()}
+              >
+                Add remote
+              </button>
+            </div>
+            <div className="git-remote-hint">
+              After adding: open a terminal in this workspace and run
+              <code> git push -u {remoteName.trim() || "origin"} {state?.branch ?? "main"}</code>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="git-working">

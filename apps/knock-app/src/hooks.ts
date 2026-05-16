@@ -1,4 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConfirmOptions } from "./ConfirmDialog";
+
+interface PendingConfirm extends ConfirmOptions {
+  resolve: (ok: boolean) => void;
+}
+
+export function useConfirm(): {
+  pending: PendingConfirm | null;
+  confirm: (opts: ConfirmOptions) => Promise<boolean>;
+  resolve: (ok: boolean) => void;
+} {
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const confirm = useCallback((opts: ConfirmOptions) => {
+    return new Promise<boolean>((resolve) => {
+      setPending({ ...opts, resolve });
+    });
+  }, []);
+  const resolve = useCallback(
+    (ok: boolean) => {
+      setPending((cur) => {
+        if (cur) cur.resolve(ok);
+        return null;
+      });
+    },
+    [],
+  );
+  return { pending, confirm, resolve };
+}
+
 
 export function usePersistedNumber(key: string, initial: number): [number, (v: number) => void] {
   const [value, setValue] = useState<number>(() => {

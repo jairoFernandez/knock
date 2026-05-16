@@ -10,6 +10,8 @@ pub struct WorkspaceInfo {
     pub root: String,
     pub name: Option<String>,
     pub active_env: Option<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -54,7 +56,7 @@ pub struct RequestFormDto {
     pub body: BodyDto,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseDto {
     pub status: u16,
@@ -63,6 +65,13 @@ pub struct ResponseDto {
     pub elapsed_ms: u128,
     pub headers: Vec<(String, String)>,
     pub body_base64: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntryDto {
+    pub at: u64,
+    pub response: ResponseDto,
 }
 
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -241,6 +250,12 @@ pub struct GitStateDto {
     pub changes: Vec<WorkingChangeDto>,
     pub staged_count: usize,
     pub unstaged_count: usize,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub last_commit_subject: Option<String>,
+    pub last_commit_at: Option<i64>,
+    pub last_commit_short: Option<String>,
 }
 
 #[tauri::command]
@@ -274,12 +289,56 @@ pub fn git_state(root: String) -> Result<GitStateDto, String> {
             unstaged: u,
         });
     }
+
+    let upstream = run_git(
+        &root,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
+
+    let (ahead, behind) = if upstream.is_some() {
+        run_git(&root, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])
+            .ok()
+            .and_then(|s| {
+                let mut parts = s.split_whitespace();
+                let behind = parts.next()?.parse::<u32>().ok()?;
+                let ahead = parts.next()?.parse::<u32>().ok()?;
+                Some((ahead, behind))
+            })
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+
+    let (last_commit_subject, last_commit_at, last_commit_short) = if has_commits {
+        run_git(&root, &["log", "-1", "--pretty=format:%h%x09%at%x09%s"])
+            .ok()
+            .and_then(|s| {
+                let mut parts = s.splitn(3, '\t');
+                let short = parts.next()?.to_string();
+                let at = parts.next()?.parse::<i64>().ok()?;
+                let subject = parts.next()?.to_string();
+                Some((Some(subject), Some(at), Some(short)))
+            })
+            .unwrap_or((None, None, None))
+    } else {
+        (None, None, None)
+    };
+
     Ok(GitStateDto {
         branch,
         has_commits,
         changes,
         staged_count,
         unstaged_count,
+        upstream,
+        ahead,
+        behind,
+        last_commit_subject,
+        last_commit_at,
+        last_commit_short,
     })
 }
 
@@ -310,6 +369,126 @@ pub fn git_commit(root: String, message: String) -> Result<(), String> {
         return Err("commit message cannot be empty".into());
     }
     run_git(&root, &["commit", "-m", &message]).map(|_| ())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteDto {
+    pub name: String,
+    pub url: String,
+}
+
+#[tauri::command]
+pub fn git_remotes(root: String) -> Result<Vec<GitRemoteDto>, String> {
+    let out = run_git(&root, &["remote", "-v"])?;
+    let mut seen = std::collections::BTreeMap::<String, String>::new();
+    for line in out.lines() {
+        // format: "<name>\t<url> (fetch|push)"
+        let mut parts = line.split_whitespace();
+        let name = parts.next().unwrap_or("").to_string();
+        let url = parts.next().unwrap_or("").to_string();
+        if !name.is_empty() && !seen.contains_key(&name) {
+            seen.insert(name, url);
+        }
+    }
+    Ok(seen
+        .into_iter()
+        .map(|(name, url)| GitRemoteDto { name, url })
+        .collect())
+}
+
+#[tauri::command]
+pub fn git_add_remote(root: String, name: String, url: String) -> Result<(), String> {
+    let name = name.trim();
+    let url = url.trim();
+    if name.is_empty() {
+        return Err("remote name cannot be empty".into());
+    }
+    if url.is_empty() {
+        return Err("remote url cannot be empty".into());
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        return Err("remote name contains invalid characters".into());
+    }
+    run_git(&root, &["remote", "add", name, url]).map(|_| ())
+}
+
+#[tauri::command]
+pub fn open_terminal(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(&path)
+            .status()
+            .map_err(|e| format!("failed to launch Terminal: {e}"))?;
+        if !status.success() {
+            return Err(format!("Terminal exited with {status}"));
+        }
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Try common terminals in order.
+        let candidates: &[(&str, &[&str])] = &[
+            ("x-terminal-emulator", &["--working-directory"]),
+            ("gnome-terminal", &["--working-directory"]),
+            ("konsole", &["--workdir"]),
+            ("xterm", &[]),
+        ];
+        for (cmd, args) in candidates {
+            let mut command = std::process::Command::new(cmd);
+            for a in *args {
+                command.arg(a);
+            }
+            command.arg(&path);
+            command.current_dir(&path);
+            if let Ok(status) = command.status() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+        Err("no terminal emulator found".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "start", "cmd"])
+            .current_dir(&path)
+            .status()
+            .map_err(|e| format!("failed to launch cmd: {e}"))?;
+        if !status.success() {
+            return Err(format!("cmd exited with {status}"));
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn open_in_file_manager(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("path does not exist: {path}"));
+    }
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "linux")]
+    let program = "xdg-open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    let status = std::process::Command::new(program)
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("failed to launch file manager: {e}"))?;
+    if !status.success() {
+        return Err(format!("file manager exited with {status}"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -588,6 +767,8 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
         active_env: workspace
             .active_env()
             .or(workspace.config.default_env.clone()),
+        color: workspace.config.color.clone(),
+        icon: workspace.config.icon.clone(),
     })
 }
 
@@ -618,7 +799,40 @@ pub fn init_example_workspace() -> Result<WorkspaceInfo, String> {
         active_env: workspace
             .active_env()
             .or(workspace.config.default_env.clone()),
+        color: workspace.config.color.clone(),
+        icon: workspace.config.icon.clone(),
     })
+}
+
+#[tauri::command]
+pub fn set_workspace_appearance(
+    root: String,
+    color: Option<String>,
+    icon: Option<String>,
+) -> Result<(), String> {
+    let cfg_path = PathBuf::from(&root).join("knock.toml");
+    let raw = std::fs::read_to_string(&cfg_path).map_err(to_err)?;
+    let mut doc: toml::Value = raw.parse().map_err(to_err)?;
+    let table = doc.as_table_mut().ok_or_else(|| "knock.toml is not a table".to_string())?;
+    match color {
+        Some(c) if !c.trim().is_empty() => {
+            table.insert("color".into(), toml::Value::String(c));
+        }
+        _ => {
+            table.remove("color");
+        }
+    }
+    match icon {
+        Some(i) if !i.trim().is_empty() => {
+            table.insert("icon".into(), toml::Value::String(i));
+        }
+        _ => {
+            table.remove("icon");
+        }
+    }
+    let serialized = toml::to_string(&doc).map_err(to_err)?;
+    std::fs::write(&cfg_path, serialized).map_err(to_err)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -632,6 +846,8 @@ pub fn open_workspace(path: String) -> Result<WorkspaceInfo, String> {
         active_env: workspace
             .active_env()
             .or(workspace.config.default_env.clone()),
+        color: workspace.config.color.clone(),
+        icon: workspace.config.icon.clone(),
     })
 }
 
@@ -963,14 +1179,72 @@ pub async fn run_request(
         &base64::engine::general_purpose::STANDARD,
         &response.body,
     );
-    Ok(ResponseDto {
+    let dto = ResponseDto {
         status: response.status,
         url: resolved.url,
         method: resolved.method,
         elapsed_ms: response.elapsed.as_millis(),
         headers: response.headers.into_iter().collect(),
         body_base64,
-    })
+    };
+    let _ = append_history(&workspace, &rel, &dto);
+    Ok(dto)
+}
+
+const HISTORY_CAP: usize = 50;
+
+fn history_path(workspace: &Workspace, rel: &str) -> PathBuf {
+    let safe = rel.replace(['/', '\\'], "__");
+    workspace.state_dir().join("history").join(format!("{safe}.jsonl"))
+}
+
+fn append_history(workspace: &Workspace, rel: &str, dto: &ResponseDto) -> std::io::Result<()> {
+    let path = history_path(workspace, rel);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let entry = HistoryEntryDto { at: now, response: dto.clone() };
+    let mut lines: Vec<String> = std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.lines().map(|l| l.to_string()).collect())
+        .unwrap_or_default();
+    lines.push(serde_json::to_string(&entry).map_err(|e| std::io::Error::other(e.to_string()))?);
+    let start = lines.len().saturating_sub(HISTORY_CAP);
+    let trimmed = &lines[start..];
+    std::fs::write(&path, trimmed.join("\n") + "\n")
+}
+
+#[tauri::command]
+pub fn load_history(root: String, rel: String) -> Result<Vec<HistoryEntryDto>, String> {
+    let workspace = Workspace::load(PathBuf::from(&root)).map_err(to_err)?;
+    let path = history_path(&workspace, &rel);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<HistoryEntryDto>(line) {
+            out.push(entry);
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn clear_history(root: String, rel: String) -> Result<(), String> {
+    let workspace = Workspace::load(PathBuf::from(&root)).map_err(to_err)?;
+    let path = history_path(&workspace, &rel);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(to_err)?;
+    }
+    Ok(())
 }
 
 fn safe_join(root: &str, rel: &str) -> Result<PathBuf, String> {

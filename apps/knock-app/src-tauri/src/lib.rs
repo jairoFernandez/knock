@@ -18,6 +18,8 @@ pub fn run() {
             commands::parse_request_form,
             commands::save_request_form,
             commands::run_request,
+            commands::load_history,
+            commands::clear_history,
             commands::list_recents,
             commands::forget_recent,
             commands::create_entry,
@@ -38,6 +40,11 @@ pub fn run() {
             commands::git_unstage,
             commands::git_stage_all,
             commands::git_commit,
+            commands::git_remotes,
+            commands::git_add_remote,
+            commands::open_in_file_manager,
+            commands::open_terminal,
+            commands::set_workspace_appearance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

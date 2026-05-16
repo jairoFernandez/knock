@@ -101,12 +101,12 @@ export function ResponseView({
         <div className="resp-history">
           <span className="resp-history-label">History</span>
           <div className="resp-history-list">
-            {history.map((run, idx) => (
+            {history.map((run, idx) => ({ run, idx })).reverse().map(({ run, idx }) => (
               <button
                 key={idx}
                 className={`resp-history-chip ${idx === activeIdx ? "active" : ""} ${shortStatusClass(run.response.status)}`}
                 onClick={() => onSelectRun?.(idx)}
-                title={`Run #${idx + 1} · ${run.response.status} · ${new Date(run.at).toLocaleTimeString()}`}
+                title={`Run #${idx + 1} · ${run.response.status} · ${new Date(run.at).toLocaleString()}`}
               >
                 {run.response.status}
               </button>

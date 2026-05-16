@@ -6,6 +6,7 @@ type Kind = "request" | "fragment" | "flow" | "environment" | "folder";
 interface Props {
   root: string;
   initialKind?: Kind;
+  initialPath?: string;
   onCreated: (rel: string, kind: Kind) => void;
   onCancel: () => void;
 }
@@ -90,12 +91,12 @@ function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-export function NewEntryModal({ root, initialKind = "request", onCreated, onCancel }: Props) {
+export function NewEntryModal({ root, initialKind = "request", initialPath = "", onCreated, onCancel }: Props) {
   const [kind, setKind] = useState<Kind>(initialKind);
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("");
-  const [path, setPath] = useState("");
-  const [pathEdited, setPathEdited] = useState(false);
+  const [path, setPath] = useState(initialPath);
+  const [pathEdited, setPathEdited] = useState(initialPath !== "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
