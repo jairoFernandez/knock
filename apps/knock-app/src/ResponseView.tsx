@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import type { ResponseDto } from "./types";
 import { statusClass, statusText } from "./statusText";
+import { JsonTree } from "./JsonTree";
+import { selectJson } from "./jsonSelect";
 
 interface Props {
   response: ResponseDto;
@@ -210,15 +212,89 @@ function BodyPane({ response, contentType, mode }: BodyPaneProps) {
   }
 
   const text = decodeUtf8(response.bodyBase64);
-  if (bareContentType(contentType) === "application/json" || bareContentType(contentType).endsWith("+json")) {
+  const isJson =
+    bareContentType(contentType) === "application/json" ||
+    bareContentType(contentType).endsWith("+json");
+  if (isJson) {
     try {
-      const pretty = JSON.stringify(JSON.parse(text), null, 2);
-      return <pre className="json-body" dangerouslySetInnerHTML={{ __html: highlightJson(pretty) }} />;
+      const parsed = JSON.parse(text);
+      return <JsonBody value={parsed} />;
     } catch {
       /* fall through */
     }
   }
   return <pre>{text}</pre>;
+}
+
+function JsonBody({ value }: { value: unknown }) {
+  const [view, setView] = useState<"tree" | "pretty">("tree");
+  const [selector, setSelector] = useState("");
+
+  const selected = useMemo(() => {
+    if (!selector.trim()) return { value, isFiltered: false, error: null as string | null };
+    try {
+      const matches = selectJson(value, selector);
+      if (matches.length === 0) return { value: [], isFiltered: true, error: null };
+      if (matches.length === 1) return { value: matches[0].value, isFiltered: true, error: null };
+      return {
+        value: Object.fromEntries(matches.map((m) => [m.path, m.value])),
+        isFiltered: true,
+        error: null,
+      };
+    } catch (e) {
+      return { value, isFiltered: false, error: String(e) };
+    }
+  }, [value, selector]);
+
+  const display = selected.value;
+  const selErr = selected.error;
+
+  return (
+    <div className="json-body-wrap">
+      <div className="json-toolbar">
+        <input
+          className="json-selector"
+          type="text"
+          value={selector}
+          onChange={(e) => setSelector(e.target.value)}
+          placeholder="selector e.g. results[*].name, *.url, **.id"
+          spellCheck={false}
+        />
+        <div className="json-view-toggle">
+          <button
+            className={view === "tree" ? "active" : ""}
+            onClick={() => setView("tree")}
+            title="Collapsible tree"
+          >
+            Tree
+          </button>
+          <button
+            className={view === "pretty" ? "active" : ""}
+            onClick={() => setView("pretty")}
+            title="Pretty-printed JSON"
+          >
+            Pretty
+          </button>
+        </div>
+      </div>
+      {selErr && <div className="json-sel-err">{selErr}</div>}
+      {selected.isFiltered && Array.isArray(display) && display.length === 0 && (
+        <div className="json-sel-empty">no matches</div>
+      )}
+      <div className="json-body-content">
+        {view === "tree" ? (
+          <JsonTree value={display} />
+        ) : (
+          <pre
+            className="json-body"
+            dangerouslySetInnerHTML={{
+              __html: highlightJson(JSON.stringify(display, null, 2)),
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
 }
 
 function HeadersPane({ response }: { response: ResponseDto }) {

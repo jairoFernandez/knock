@@ -32,11 +32,15 @@ pub fn init_at(parent: &Path, name: &str, with_git: bool) -> Result<PathBuf, Wor
     std::fs::write(root.join(".gitignore"), "/.knock/\n*.local.toml\n")?;
     std::fs::write(
         root.join("environments").join("local.toml"),
-        "# environment variables for local development\nbase_url = \"https://httpbin.org\"\n",
+        "# environment variables for local development\nbase_url = \"https://pokeapi.co/api/v2\"\n",
     )?;
     std::fs::write(
-        root.join("requests").join("ping.toml"),
-        "name = \"ping\"\nmethod = \"GET\"\nurl = \"{{base_url}}/get\"\n",
+        root.join("requests").join("list-pokemon.toml"),
+        "name = \"list pokemon\"\nmethod = \"GET\"\nurl = \"{{base_url}}/pokemon\"\n\n[query]\nlimit = \"20\"\noffset = \"0\"\n",
+    )?;
+    std::fs::write(
+        root.join("requests").join("get-pokemon.toml"),
+        "name = \"get pokemon\"\nmethod = \"GET\"\nurl = \"{{base_url}}/pokemon/ditto\"\n",
     )?;
 
     if with_git {

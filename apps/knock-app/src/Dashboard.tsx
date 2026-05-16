@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { RecentEntry } from "./types";
+import type { RecentEntry, WorkspaceInfo } from "./types";
 
 interface Props {
   onOpen: (root: string) => void;
   onPickDirectory: () => void;
   onCreate: () => void;
+  onLoadInfo?: (info: WorkspaceInfo) => void;
 }
 
 function timeAgo(unixSecs: number): string {
@@ -24,9 +25,10 @@ function basename(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
-export function Dashboard({ onOpen, onPickDirectory, onCreate }: Props) {
+export function Dashboard({ onOpen, onPickDirectory, onCreate, onLoadInfo }: Props) {
   const [recents, setRecents] = useState<RecentEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [exampleBusy, setExampleBusy] = useState(false);
 
   useEffect(() => {
     invoke<RecentEntry[]>("list_recents")
@@ -34,6 +36,20 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate }: Props) {
       .catch(() => setRecents([]))
       .finally(() => setLoaded(true));
   }, []);
+
+  async function loadExample() {
+    if (exampleBusy) return;
+    setExampleBusy(true);
+    try {
+      const info = await invoke<WorkspaceInfo>("init_example_workspace");
+      if (onLoadInfo) onLoadInfo(info);
+      else onOpen(info.root);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setExampleBusy(false);
+    }
+  }
 
   async function forget(root: string) {
     try {
@@ -62,6 +78,17 @@ export function Dashboard({ onOpen, onPickDirectory, onCreate }: Props) {
             <div className="card-icon">⌂</div>
             <div className="card-title">Open from disk…</div>
             <div className="card-sub">Browse for a knock.toml</div>
+          </button>
+          <button
+            className="card card-action"
+            onClick={loadExample}
+            disabled={exampleBusy}
+          >
+            <div className="card-icon">★</div>
+            <div className="card-title">
+              {exampleBusy ? "Loading…" : "PokeAPI example"}
+            </div>
+            <div className="card-sub">Try a ready-made workspace</div>
           </button>
 
           {loaded && recents.length === 0 && (

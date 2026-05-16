@@ -40,23 +40,38 @@ interface UrlDerivation {
 function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  let candidate = trimmed;
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(candidate)) {
-    candidate = `https://${candidate}`;
-  }
-  let u: URL;
-  try {
-    u = new URL(candidate);
-  } catch {
-    return null;
-  }
-  const host = u.host;
-  const rawSegments = u.pathname.split("/").filter(Boolean);
-  const segments = rawSegments.map(sanitizeSegment);
   const verb = method.toLowerCase();
 
+  // Strip a leading template variable like {{base_url}} so it does not
+  // get parsed as the host. Treat the remainder as a path under no host.
+  const templateLead = trimmed.match(/^\{\{\s*[^}]+\s*\}\}/);
+  let host = "";
+  let pathPart: string;
+  if (templateLead) {
+    pathPart = trimmed.slice(templateLead[0].length);
+  } else {
+    let candidate = trimmed;
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(candidate)) {
+      candidate = `https://${candidate}`;
+    }
+    let u: URL;
+    try {
+      u = new URL(candidate);
+    } catch {
+      return null;
+    }
+    host = u.host;
+    pathPart = u.pathname + (u.search || "");
+  }
+
+  // Drop query string, keep path only.
+  const pathOnly = pathPart.split("?")[0];
+  const rawSegments = pathOnly.split("/").filter(Boolean);
+  const segments = rawSegments.map(sanitizeSegment);
+
+  const prefix = host ? `${host}/` : "";
   if (segments.length === 0) {
-    return { path: `${host}/${verb}`, host, name: "/" };
+    return { path: `${prefix}${verb}`.replace(/\/+$/, ""), host, name: "/" };
   }
   const last = segments[segments.length - 1];
   const lastRaw = rawSegments[rawSegments.length - 1];
@@ -64,13 +79,13 @@ function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
     const folders = segments.slice(0, -1).join("/");
     const folderPart = folders ? `${folders}/` : "";
     return {
-      path: `${host}/${folderPart}${last}`,
+      path: `${prefix}${folderPart}${last}`,
       host,
       name: `/${lastRaw}`,
     };
   }
   const folders = segments.join("/");
-  return { path: `${host}/${folders}/${verb}`, host, name: "/" };
+  return { path: `${prefix}${folders}/${verb}`, host, name: "/" };
 }
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];

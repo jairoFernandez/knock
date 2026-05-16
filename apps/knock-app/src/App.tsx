@@ -41,7 +41,7 @@ export function App() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [showNewEntry, setShowNewEntry] = useState(false);
+  const [showNewEntry, setShowNewEntry] = useState<false | "request" | "fragment" | "flow" | "environment" | "folder">(false);
   const [railMode, setRailMode] = useState<RailMode>("workspace");
   const [filesRefreshToken, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
@@ -260,6 +260,7 @@ export function App() {
           onOpen={openWorkspaceAt}
           onPickDirectory={openWorkspace}
           onCreate={() => setShowNew(true)}
+          onLoadInfo={loadWorkspace}
         />
         {showNew && (
           <NewWorkspaceModal
@@ -345,7 +346,7 @@ export function App() {
               <button
                 className="sidebar-add"
                 title="New request / fragment / flow / environment"
-                onClick={() => setShowNewEntry(true)}
+                onClick={() => setShowNewEntry("request")}
               >
                 +
               </button>
@@ -393,6 +394,22 @@ export function App() {
                   }
                 }}
                 onSetColor={(dirPath) => setColorTarget(dirPath)}
+                onAddInSection={(kind) => setShowNewEntry(kind)}
+                onDeleteFolder={async (path) => {
+                  if (!workspace) return;
+                  if (!confirm(`Delete folder ${path} and all its contents?`)) return;
+                  try {
+                    await invoke("delete_folder", { root: workspace.root, rel: path });
+                    if (selected && (selected === path || selected.startsWith(`${path}/`))) {
+                      setSelected(null);
+                      setForm(null);
+                      setRawContent("");
+                    }
+                    await refreshTree(workspace.root);
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
               />
             )}
           </>
@@ -519,6 +536,7 @@ export function App() {
       {showNewEntry && workspace && (
         <NewEntryModal
           root={workspace.root}
+          initialKind={showNewEntry}
           onCancel={() => setShowNewEntry(false)}
           onCreated={async (rel, kind) => {
             setShowNewEntry(false);

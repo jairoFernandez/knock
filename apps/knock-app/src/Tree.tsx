@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { EntryKind, TreeEntry } from "./types";
 
+export type SectionKind = "request" | "fragment" | "flow" | "environment";
+
 interface TreeProps {
   entries: TreeEntry[];
   directories: string[];
@@ -8,9 +10,18 @@ interface TreeProps {
   colors: Record<string, string>;
   onSelect: (path: string) => void;
   onDelete?: (path: string) => void;
+  onDeleteFolder?: (path: string) => void;
   onRename?: (path: string) => void;
   onSetColor?: (dirPath: string) => void;
+  onAddInSection?: (kind: SectionKind) => void;
 }
+
+const SECTIONS: { kind: SectionKind; dir: string; label: string }[] = [
+  { kind: "request", dir: "requests", label: "Requests" },
+  { kind: "flow", dir: "flows", label: "Flows" },
+  { kind: "fragment", dir: "fragments", label: "Fragments" },
+  { kind: "environment", dir: "environments", label: "Environments" },
+];
 
 interface Node {
   name: string;
@@ -88,6 +99,7 @@ interface RenderState {
   toggle: (path: string) => void;
   onSelect: (path: string) => void;
   onDelete?: (path: string) => void;
+  onDeleteFolder?: (path: string) => void;
   onRename?: (path: string) => void;
   onSetColor?: (path: string) => void;
   colors: Record<string, string>;
@@ -102,10 +114,11 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
     return a.name.localeCompare(b.name);
   });
   for (const child of childrenSorted) {
-    const pad = { paddingLeft: 8 + depth * 12 };
+    const pad = { paddingLeft: 8 + depth * 16 };
     if (child.entry) {
       const e = child.entry;
       const label = e.kind === "request" ? e.name ?? child.name.replace(/\.toml$/, "") : child.name.replace(/\.toml$/, "");
+      const isProtected = e.kind === "config";
       items.push(
         <div
           key={child.path}
@@ -123,7 +136,7 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
           )}
           <span className="tree-label">{label}</span>
           <div className="tree-row-actions">
-            {state.onRename && (
+            {!isProtected && state.onRename && (
               <button
                 className="tree-action"
                 title="Rename / move"
@@ -135,7 +148,7 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
                 ✎
               </button>
             )}
-            {state.onDelete && (
+            {!isProtected && state.onDelete && (
               <button
                 className="tree-action tree-delete"
                 title="Delete"
@@ -191,6 +204,18 @@ function renderNode(node: Node, depth: number, state: RenderState): JSX.Element[
                 ✎
               </button>
             )}
+            {state.onDeleteFolder && (
+              <button
+                className="tree-action tree-delete"
+                title="Delete folder"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  state.onDeleteFolder!(child.path);
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
         </div>,
       );
@@ -209,8 +234,10 @@ export function Tree({
   colors,
   onSelect,
   onDelete,
+  onDeleteFolder,
   onRename,
   onSetColor,
+  onAddInSection,
 }: TreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (path: string) =>
@@ -221,18 +248,65 @@ export function Tree({
       return next;
     });
   const tree = buildTree(entries, directories);
+  const state: RenderState = {
+    selected,
+    collapsed,
+    toggle,
+    onSelect,
+    onDelete,
+    onDeleteFolder,
+    onRename,
+    onSetColor,
+    colors,
+  };
+
+  const childByName = new Map<string, Node>();
+  for (const c of tree.children) childByName.set(c.name, c);
+  const knownDirs = new Set(SECTIONS.map((s) => s.dir));
+  const otherChildren = tree.children.filter((c) => !knownDirs.has(c.name));
+
   return (
     <div className="tree">
-      {renderNode(tree, 0, {
-        selected,
-        collapsed,
-        toggle,
-        onSelect,
-        onDelete,
-        onRename,
-        onSetColor,
-        colors,
+      {SECTIONS.map((sec) => {
+        const node = childByName.get(sec.dir);
+        const isCollapsed = node ? collapsed.has(node.path) : false;
+        return (
+          <div key={sec.kind} className="tree-section">
+            <div
+              className="tree-section-header"
+              onClick={() => node && toggle(node.path)}
+            >
+              {node && (
+                <span className={`dir-glyph ${isCollapsed ? "collapsed" : "open"}`}>
+                  {isCollapsed ? "▸" : "▾"}
+                </span>
+              )}
+              <span className="tree-section-label">{sec.label}</span>
+              {onAddInSection && (
+                <button
+                  className="tree-section-add"
+                  title={`New ${sec.label.toLowerCase().replace(/s$/, "")}`}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onAddInSection(sec.kind);
+                  }}
+                >
+                  +
+                </button>
+              )}
+            </div>
+            {node && !isCollapsed && renderNode(node, 1, state)}
+          </div>
+        );
       })}
+      {otherChildren.length > 0 && (
+        <div className="tree-section">
+          <div className="tree-section-header">
+            <span className="tree-section-label">Workspace</span>
+          </div>
+          {renderNode({ ...tree, children: otherChildren }, 0, state)}
+        </div>
+      )}
     </div>
   );
 }

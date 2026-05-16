@@ -7,6 +7,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::init_workspace,
+            commands::init_example_workspace,
             commands::open_workspace,
             commands::list_tree,
             commands::list_envs,
@@ -23,6 +24,7 @@ pub fn run() {
             commands::delete_entry,
             commands::rename_entry,
             commands::create_folder,
+            commands::delete_folder,
             commands::list_directories,
             commands::get_colors,
             commands::set_color,

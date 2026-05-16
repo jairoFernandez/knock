@@ -374,6 +374,10 @@ pub fn create_entry(
 
 #[tauri::command]
 pub fn delete_entry(root: String, rel: String) -> Result<(), String> {
+    let normalized = rel.trim().trim_start_matches('/');
+    if normalized == "knock.toml" {
+        return Err("knock.toml is protected and cannot be deleted".into());
+    }
     let path = safe_join(&root, &rel)?;
     if !path.is_file() {
         return Err("not a file".into());
@@ -390,6 +394,9 @@ pub fn rename_entry(root: String, old_rel: String, new_rel: String) -> Result<St
     }
     if new_trimmed.contains("..") {
         return Err("path cannot contain ..".into());
+    }
+    if old_trimmed == "knock.toml" || new_trimmed == "knock.toml" {
+        return Err("knock.toml is protected and cannot be moved".into());
     }
 
     let root_path = PathBuf::from(&root)
@@ -409,6 +416,42 @@ pub fn rename_entry(root: String, old_rel: String, new_rel: String) -> Result<St
     }
     std::fs::rename(&old_path, &new_path).map_err(to_err)?;
     Ok(new_trimmed)
+}
+
+#[tauri::command]
+pub fn delete_folder(root: String, rel: String) -> Result<(), String> {
+    let trimmed = rel.trim().trim_start_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Err("path cannot be empty".into());
+    }
+    if trimmed.contains("..") {
+        return Err("path cannot contain ..".into());
+    }
+    // Protect top-level scaffold dirs.
+    if matches!(
+        trimmed.as_str(),
+        "requests" | "flows" | "fragments" | "environments"
+    ) {
+        return Err(format!("{trimmed} is a protected workspace folder"));
+    }
+    let root_path = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace root: {e}"))?;
+    let dir_path = root_path.join(&trimmed);
+    if !dir_path.exists() {
+        return Err(format!("{trimmed} not found"));
+    }
+    if !dir_path.is_dir() {
+        return Err(format!("{trimmed} is not a directory"));
+    }
+    // Ensure stay under root.
+    let canonical = dir_path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {trimmed}: {e}"))?;
+    if !canonical.starts_with(&root_path) {
+        return Err("path escapes workspace root".into());
+    }
+    std::fs::remove_dir_all(&canonical).map_err(to_err)
 }
 
 #[tauri::command]
@@ -536,6 +579,36 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
         return Err("workspace name cannot contain path separators".into());
     }
     let root = init_at(Path::new(&parent), &name, git).map_err(to_err)?;
+    let workspace = Workspace::load(root).map_err(to_err)?;
+    let root_str = workspace.root.display().to_string();
+    let _ = crate::recents::remember(&root_str);
+    Ok(WorkspaceInfo {
+        root: root_str,
+        name: workspace.config.name.clone(),
+        active_env: workspace
+            .active_env()
+            .or(workspace.config.default_env.clone()),
+    })
+}
+
+#[tauri::command]
+pub fn init_example_workspace() -> Result<WorkspaceInfo, String> {
+    let parent = dirs::data_dir()
+        .ok_or_else(|| "no data dir".to_string())?
+        .join("knock")
+        .join("workspaces");
+    std::fs::create_dir_all(&parent).map_err(to_err)?;
+    let name = "pokeapi-example";
+    let root = parent.join(name);
+    if !root.join("knock.toml").is_file() {
+        if root.exists() {
+            return Err(format!(
+                "example workspace dir exists but has no knock.toml: {} (remove or rename it manually)",
+                root.display()
+            ));
+        }
+        init_at(&parent, name, false).map_err(to_err)?;
+    }
     let workspace = Workspace::load(root).map_err(to_err)?;
     let root_str = workspace.root.display().to_string();
     let _ = crate::recents::remember(&root_str);
