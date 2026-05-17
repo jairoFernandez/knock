@@ -1713,6 +1713,13 @@ button.danger:hover:not(:disabled) {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  transition: grid-template-columns 0.15s ease;
+}
+.kube-body.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.kube-body.sidebar-collapsed > .kube-list {
+  display: none;
 }
 @media (max-width: 720px) {
   .kube-body { grid-template-columns: minmax(0, 1fr); }
@@ -1877,6 +1884,21 @@ button.danger:hover:not(:disabled) {
   height: auto;
   max-height: none;
   min-height: 160px;
+}
+
+/* Expanded terminals: hide every other section, fill the panel */
+.kube-panel.terms-expanded > .kube-section:not(.kube-terms-section) {
+  display: none;
+}
+.kube-panel.terms-expanded > .kube-panel-header {
+  display: none;
+}
+.kube-panel.terms-expanded {
+  padding: 0;
+}
+.kube-panel.terms-expanded > .kube-terms-section {
+  flex: 1 1 auto;
+  padding: 6px 10px 10px;
 }
 .kube-panel-header {
   display: flex;

@@ -39,6 +39,24 @@ export function KubeconfigsView() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [busy, setBusy] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("knock.kube.sidebar.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  function toggleSidebar() {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("knock.kube.sidebar.collapsed", next ? "1" : "0");
+      } catch {
+        /* non-fatal */
+      }
+      return next;
+    });
+  }
   const [preferredTerminal, setPreferredTerminal] = useState<string>("auto");
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -134,6 +152,13 @@ export function KubeconfigsView() {
           </span>
         </div>
         <div className="kube-toolbar-actions">
+          <button
+            className="kube-gear"
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? "Show list" : "Hide list"}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
           <div className="kube-settings-wrap">
             <button
               className="kube-gear"
@@ -187,7 +212,7 @@ export function KubeconfigsView() {
         </div>
       )}
 
-      <div className="kube-body">
+      <div className={`kube-body ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <aside className="kube-list">
           {grouped.map(([project, items]) => {
             const open = !collapsed[project];
@@ -330,6 +355,8 @@ function UsePanel({
   const [pass, setPass] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
 
+  const [termsExpanded, setTermsExpanded] = useState(false);
+
   useEffect(() => {
     setPass("");
     setRevealed(null);
@@ -399,7 +426,7 @@ function UsePanel({
   }
 
   return (
-    <section className="kube-panel">
+    <section className={`kube-panel ${termsExpanded ? "terms-expanded" : ""}`}>
       <header className="kube-panel-header">
         <div>
           <div className="kube-panel-title">
@@ -484,12 +511,21 @@ function UsePanel({
         </div>
       )}
 
-      <div className="kube-section kube-section-grow">
+      <div className="kube-section kube-section-grow kube-terms-section">
         <div className="kube-section-header">
           <div className="kube-section-title">Embedded terminals</div>
-          {encrypted && !pass && (
-            <div className="kube-subtle">Enter passphrase above to start new sessions.</div>
-          )}
+          <div className="kube-actions">
+            {encrypted && !pass && (
+              <span className="kube-subtle">Enter passphrase above to start new sessions.</span>
+            )}
+            <button
+              className="kube-gear"
+              onClick={() => setTermsExpanded((v) => !v)}
+              title={termsExpanded ? "Restore" : "Expand"}
+            >
+              {termsExpanded ? "⤡" : "⤢"}
+            </button>
+          </div>
         </div>
         <Suspense fallback={<div className="kube-empty">Loading terminals…</div>}>
           <KubeTerminalsPane spawnArgs={spawnArgs} />
