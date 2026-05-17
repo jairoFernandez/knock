@@ -8,7 +8,14 @@ import { NewWorkspaceModal } from "./NewWorkspaceModal";
 import { NewEntryModal } from "./NewEntryModal";
 import { RequestEditor } from "./RequestEditor";
 import { Dashboard } from "./Dashboard";
-import { Rail, type RailMode } from "./Rail";
+import {
+  GlobalRail,
+  ProjectRail,
+  type GlobalRailMode,
+  type ProjectRailMode,
+} from "./Rail";
+import { FileBrowser } from "./FileBrowser";
+import { GitPanel } from "./GitPanel";
 import { KubeconfigsView } from "./KubeconfigsView";
 import { WindowControls, detectIsMac } from "./WindowControls";
 import { Splitter } from "./Splitter";
@@ -104,9 +111,10 @@ export function App() {
   const [showNew, setShowNew] = useState(false);
   const [showNewEntry, setShowNewEntry] = useState<false | "request" | "fragment" | "flow" | "environment" | "folder">(false);
   const [newEntryPath, setNewEntryPath] = useState<string>("");
-  const [railMode, setRailMode] = useState<RailMode>("workspace");
+  const [globalMode, setGlobalMode] = useState<GlobalRailMode>("requests");
+  const [projectMode, setProjectMode] = useState<ProjectRailMode>("workspace");
   const isMacPlatform = useMemo(() => detectIsMac(), []);
-  const [, setFilesRefreshToken] = useState(0);
+  const [filesRefreshToken, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
@@ -449,8 +457,8 @@ export function App() {
           <div className="topbar-spacer" data-tauri-drag-region />
           <WindowControls />
         </div>
-        <Rail mode={railMode} onChange={setRailMode} />
-        {railMode === "kube" ? (
+        <GlobalRail mode={globalMode} onChange={setGlobalMode} />
+        {globalMode === "kube" ? (
           <KubeconfigsView />
         ) : (
           <Dashboard
@@ -502,9 +510,9 @@ export function App() {
   const toolsCols = activeTool ? ` 4px ${toolsWidth}px 36px` : ` 36px`;
   const appStyle: React.CSSProperties = {
     gridTemplateColumns:
-      railMode === "kube"
-        ? `44px ${sidebarWidth}px 4px minmax(0, 1fr)${toolsCols}`
-        : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
+      globalMode === "kube"
+        ? `44px minmax(0, 1fr)${toolsCols}`
+        : `44px 44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
   if (workspace.color) {
     (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
@@ -717,10 +725,13 @@ export function App() {
         <WindowControls />
       </div>
 
-      <Rail mode={railMode} onChange={setRailMode} />
+      <GlobalRail mode={globalMode} onChange={setGlobalMode} />
+      {globalMode === "requests" && (
+        <ProjectRail mode={projectMode} onChange={setProjectMode} />
+      )}
 
       <div className="panel sidebar">
-        {railMode === "workspace" && (
+        {projectMode === "workspace" && globalMode === "requests" && (
           <>
             <div className="panel-header sidebar-header">
               <span>Workspace</span>
@@ -954,7 +965,30 @@ export function App() {
             )}
           </>
         )}
-        {railMode === "kube" && (
+        {projectMode === "files" && globalMode === "requests" && workspace && (
+          <>
+            <div className="panel-header">Files</div>
+            <FileBrowser
+              root={workspace.root}
+              selected={selected}
+              onSelect={setSelected}
+              refreshToken={filesRefreshToken}
+            />
+          </>
+        )}
+        {projectMode === "git" && globalMode === "requests" && workspace && (
+          <>
+            <div className="panel-header">Git</div>
+            <GitPanel
+              root={workspace.root}
+              onOpenFile={(rel) => {
+                setSelected(rel);
+                setProjectMode("files");
+              }}
+            />
+          </>
+        )}
+        {globalMode === "kube" && (
           <>
             <div className="panel-header">Kubeconfigs</div>
             <div className="kube-sidebar-hint">
@@ -969,9 +1003,9 @@ export function App() {
       />
 
       <div className="panel editor-panel">
-        {railMode === "kube" && <KubeconfigsView />}
-        {railMode !== "kube" && !selected && <div className="empty">Select a request from the tree.</div>}
-        {railMode !== "kube" && selected && isRequest && form && (
+        {globalMode === "kube" && <KubeconfigsView />}
+        {globalMode === "requests" && !selected && <div className="empty">Select a request from the tree.</div>}
+        {globalMode === "requests" && selected && isRequest && form && (
           <RequestEditor
             form={form}
             vars={varsRecord}
@@ -980,7 +1014,7 @@ export function App() {
             onSend={runRequest}
           />
         )}
-        {railMode !== "kube" && selected && isOpenApi && workspace && (
+        {globalMode === "requests" && selected && isOpenApi && workspace && (
           <OpenApiView
             root={workspace.root}
             rel={selected}
@@ -989,7 +1023,7 @@ export function App() {
             onReimport={() => setShowOpenApiImport(true)}
           />
         )}
-        {railMode !== "kube" && selected && !isRequest && !isOpenApi && (
+        {globalMode === "requests" && selected && !isRequest && !isOpenApi && (
           <>
             <div className="panel-header raw-header">
               <span>{selected}{rawDirty && <span className="dirty-mark"> •</span>}</span>
@@ -1019,13 +1053,13 @@ export function App() {
         )}
       </div>
 
-      {railMode !== "kube" && (
+      {globalMode === "requests" && (
         <Splitter
           onDelta={(d) => setResponseWidth(clampWidth(responseWidth - d, 240, 1200))}
         />
       )}
 
-      {railMode !== "kube" && (
+      {globalMode === "requests" && (
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
         {error && <div className="error">{error}</div>}
