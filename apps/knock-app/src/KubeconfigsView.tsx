@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { KubeconfigEditor } from "./KubeconfigEditor";
 import { highlightYaml } from "./yamlHighlight";
+import { lazy, Suspense } from "react";
+const KubeTerminal = lazy(() =>
+  import("./KubeTerminal").then((m) => ({ default: m.KubeTerminal })),
+);
 
 const DEFAULT_PROJECT = "default";
 
@@ -21,6 +25,12 @@ type Mode =
   | { kind: "add" }
   | { kind: "edit"; name: string; project: string };
 
+interface TerminalInfo {
+  id: string;
+  label: string;
+  available: boolean;
+}
+
 export function KubeconfigsView() {
   const [storeDir, setStoreDir] = useState<string>("");
   const [entries, setEntries] = useState<KubeEntry[]>([]);
@@ -29,6 +39,9 @@ export function KubeconfigsView() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [busy, setBusy] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [preferredTerminal, setPreferredTerminal] = useState<string>("auto");
+  const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,9 +56,31 @@ export function KubeconfigsView() {
     }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const s = await invoke<{ preferredTerminal: string }>("kubeconfig_settings_get");
+      setPreferredTerminal(s.preferredTerminal || "auto");
+      const t = await invoke<TerminalInfo[]>("kubeconfig_list_terminals");
+      setTerminals(t);
+    } catch (e) {
+      // non-fatal — settings file may not exist yet
+      console.warn("kubeconfig settings load:", e);
+    }
+  }, []);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    loadSettings();
+  }, [refresh, loadSettings]);
+
+  async function changePreferredTerminal(id: string) {
+    setPreferredTerminal(id);
+    try {
+      await invoke("kubeconfig_settings_set", { preferredTerminal: id });
+    } catch (e) {
+      setStatus({ kind: "error", text: String(e) });
+    }
+  }
 
   async function doRemove(name: string, project: string) {
     if (!confirm(`Delete kubeconfig '${name}' from project '${project}'?`)) return;
@@ -99,6 +134,37 @@ export function KubeconfigsView() {
           </span>
         </div>
         <div className="kube-toolbar-actions">
+          <div className="kube-settings-wrap">
+            <button
+              className="kube-gear"
+              onClick={() => setShowSettings((v) => !v)}
+              title="Settings"
+            >
+              ⚙
+            </button>
+            {showSettings && (
+              <div className="kube-settings-popover">
+                <div className="kube-settings-row">
+                  <label className="kube-label">Preferred terminal</label>
+                  <select
+                    className="kube-input"
+                    value={preferredTerminal}
+                    onChange={(e) => changePreferredTerminal(e.target.value)}
+                  >
+                    {terminals.map((t) => (
+                      <option key={t.id} value={t.id} disabled={!t.available}>
+                        {t.label}
+                        {!t.available ? " (not found)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="kube-settings-actions">
+                  <button onClick={() => setShowSettings(false)}>Close</button>
+                </div>
+              </div>
+            )}
+          </div>
           <button
             className="primary"
             onClick={() => {
@@ -263,11 +329,32 @@ function UsePanel({
   const encrypted = entry?.encrypted ?? true;
   const [pass, setPass] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [termSessions, setTermSessions] = useState<string[]>([]);
+  const [activeTermIdx, setActiveTermIdx] = useState(0);
 
   useEffect(() => {
     setPass("");
     setRevealed(null);
+    setTermSessions([]);
+    setActiveTermIdx(0);
   }, [name, project]);
+
+  const canEmbed = !encrypted || !!pass;
+  function addTermSession() {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setTermSessions((prev) => {
+      const next = [...prev, id];
+      setActiveTermIdx(next.length - 1);
+      return next;
+    });
+  }
+  function closeTermSession(idx: number) {
+    setTermSessions((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      setActiveTermIdx((cur) => Math.max(0, Math.min(cur, next.length - 1)));
+      return next;
+    });
+  }
 
   async function callWith<T>(fn: (passphrase: string | undefined) => Promise<T>): Promise<T | null> {
     if (encrypted && !pass) {
@@ -311,6 +398,19 @@ function UsePanel({
       const cmd = `export KUBECONFIG=${shellQuote(path)}`;
       await navigator.clipboard.writeText(cmd).catch(() => undefined);
       setStatus({ kind: "info", text: `Copied: ${cmd}` });
+    }
+  }
+  async function doOpenTerminal() {
+    const term = await callWith((p) =>
+      invoke<string>("kubeconfig_open_terminal", {
+        name,
+        project,
+        passphrase: p,
+        terminal: null,
+      }),
+    );
+    if (term) {
+      setStatus({ kind: "info", text: `Opened ${term} with KUBECONFIG loaded.` });
     }
   }
 
@@ -368,11 +468,14 @@ function UsePanel({
           </div>
         )}
         <div className="kube-actions kube-actions-spaced">
-          <button onClick={doExport} disabled={busy}>
-            Save as temp file
+          <button className="primary" onClick={doOpenTerminal} disabled={busy}>
+            Open in terminal
           </button>
           <button onClick={doShell} disabled={busy}>
             Copy <code>export KUBECONFIG=…</code>
+          </button>
+          <button onClick={doExport} disabled={busy}>
+            Save as temp file
           </button>
         </div>
       </div>
@@ -396,6 +499,59 @@ function UsePanel({
           />
         </div>
       )}
+
+      <div className="kube-section kube-section-grow">
+        <div className="kube-section-header">
+          <div className="kube-section-title">Embedded terminal</div>
+          <div className="kube-actions">
+            {termSessions.length > 0 && (
+              <>
+                {termSessions.map((sid, i) => (
+                  <button
+                    key={sid}
+                    className={i === activeTermIdx ? "primary" : ""}
+                    onClick={() => setActiveTermIdx(i)}
+                    title={`Session ${i + 1}`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                <button onClick={() => closeTermSession(activeTermIdx)} title="Close current">
+                  −
+                </button>
+              </>
+            )}
+            <button onClick={addTermSession} disabled={!canEmbed} title="New session">
+              + Shell
+            </button>
+          </div>
+        </div>
+        {!canEmbed && (
+          <div className="kube-empty">
+            {encrypted
+              ? "Enter passphrase above, then click + Shell."
+              : "Click + Shell to open a session."}
+          </div>
+        )}
+        {canEmbed && termSessions.length === 0 && (
+          <div className="kube-empty">No sessions. Click + Shell to start one.</div>
+        )}
+        {termSessions.map((sid, i) => (
+          <div
+            key={sid}
+            className="kube-term-host"
+            style={{ display: i === activeTermIdx ? "flex" : "none" }}
+          >
+            <Suspense fallback={<div className="kube-empty">Loading terminal…</div>}>
+              <KubeTerminal
+                name={name}
+                project={project}
+                passphrase={encrypted ? pass : null}
+              />
+            </Suspense>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

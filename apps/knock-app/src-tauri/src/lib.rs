@@ -2,11 +2,24 @@ pub mod commands;
 mod kubeconfig_cmd;
 mod openapi_cmd;
 mod recents;
+mod terminal_cmd;
+
+use std::time::{Duration, SystemTime};
+use tauri::{Manager, RunEvent};
+
+use kubeconfig_cmd::TempCache;
+use terminal_cmd::TerminalSessions;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(TempCache::default())
+        .manage(TerminalSessions::default())
+        .setup(|_app| {
+            sweep_stale_tmp_files();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::init_workspace,
             commands::init_example_workspace,
@@ -69,7 +82,57 @@ pub fn run() {
             kubeconfig_cmd::kubeconfig_get,
             kubeconfig_cmd::kubeconfig_remove,
             kubeconfig_cmd::kubeconfig_export_temp,
+            kubeconfig_cmd::kubeconfig_settings_get,
+            kubeconfig_cmd::kubeconfig_settings_set,
+            terminal_cmd::kubeconfig_list_terminals,
+            terminal_cmd::kubeconfig_open_terminal,
+            terminal_cmd::terminal_spawn,
+            terminal_cmd::terminal_write,
+            terminal_cmd::terminal_resize,
+            terminal_cmd::terminal_kill,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::Exit = event {
+            if let Some(sessions) = app_handle.try_state::<TerminalSessions>() {
+                sessions.kill_all();
+            }
+            if let Some(cache) = app_handle.try_state::<TempCache>() {
+                cleanup_temp_files(&cache);
+            }
+        }
+    });
+}
+
+fn cleanup_temp_files(cache: &TempCache) {
+    let (temps, aux) = cache.drain_all();
+    for p in temps.into_iter().chain(aux.into_iter()) {
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
+/// Best-effort: at startup, remove leftover tmp files older than 24h from
+/// `<store_dir>/tmp/`. Covers crashes / SIGKILL where RunEvent::Exit didn't fire.
+fn sweep_stale_tmp_files() {
+    let Ok(dir) = knock_core::kubeconfigs::default_store_dir() else {
+        return;
+    };
+    let tmp_dir = dir.join("tmp");
+    let Ok(read) = std::fs::read_dir(&tmp_dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    let cutoff = Duration::from_secs(24 * 60 * 60);
+    for entry in read.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(modified) = meta.modified() else { continue };
+        if now.duration_since(modified).unwrap_or(Duration::ZERO) > cutoff {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

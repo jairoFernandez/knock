@@ -52,6 +52,49 @@ pub struct KubeEntryMeta {
     pub size_bytes: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KubeconfigSettings {
+    #[serde(default = "default_preferred_terminal")]
+    pub preferred_terminal: String,
+}
+
+impl Default for KubeconfigSettings {
+    fn default() -> Self {
+        Self {
+            preferred_terminal: default_preferred_terminal(),
+        }
+    }
+}
+
+fn default_preferred_terminal() -> String {
+    "auto".to_string()
+}
+
+const SETTINGS_FILE: &str = "settings.json";
+
+pub fn settings_path(dir: &Path) -> PathBuf {
+    dir.join(SETTINGS_FILE)
+}
+
+pub fn read_settings(dir: &Path) -> Result<KubeconfigSettings, KubeError> {
+    let path = settings_path(dir);
+    if !path.exists() {
+        return Ok(KubeconfigSettings::default());
+    }
+    let raw = fs::read_to_string(&path)?;
+    let s: KubeconfigSettings =
+        serde_json::from_str(&raw).unwrap_or_else(|_| KubeconfigSettings::default());
+    Ok(s)
+}
+
+pub fn write_settings(dir: &Path, s: &KubeconfigSettings) -> Result<(), KubeError> {
+    ensure_store_dir(dir)?;
+    let raw = serde_json::to_vec_pretty(s).map_err(|e| KubeError::Kdf(e.to_string()))?;
+    let path = settings_path(dir);
+    write_atomic(&path, &raw)?;
+    Ok(())
+}
+
 /// Default store dir: $XDG_CONFIG_HOME/knock/kubeconfigs or platform equivalent.
 pub fn default_store_dir() -> Result<PathBuf, KubeError> {
     let base = dirs::config_dir().ok_or(KubeError::NoHome)?;
@@ -331,6 +374,9 @@ pub fn list(dir: &Path) -> Result<Vec<KubeEntryMeta>, KubeError> {
             let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
+            if file_name == SETTINGS_FILE {
+                continue;
+            }
             let (name, encrypted) = if let Some(n) = file_name.strip_suffix(".kkc") {
                 (n.to_string(), true)
             } else if let Some(n) = file_name.strip_suffix(".yaml") {
@@ -548,6 +594,38 @@ mod tests {
         ));
         add(d.path(), "default", "a", b"2", Some("p"), true).unwrap();
         assert_eq!(get(d.path(), "default", "a", Some("p")).unwrap(), b"2");
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let d = tempdir().unwrap();
+        let s = read_settings(d.path()).unwrap();
+        assert_eq!(s.preferred_terminal, "auto");
+        write_settings(
+            d.path(),
+            &KubeconfigSettings {
+                preferred_terminal: "iterm".to_string(),
+            },
+        )
+        .unwrap();
+        let s = read_settings(d.path()).unwrap();
+        assert_eq!(s.preferred_terminal, "iterm");
+    }
+
+    #[test]
+    fn settings_excluded_from_list() {
+        let d = tempdir().unwrap();
+        write_settings(
+            d.path(),
+            &KubeconfigSettings {
+                preferred_terminal: "warp".to_string(),
+            },
+        )
+        .unwrap();
+        add(d.path(), "default", "a", b"x", None, false).unwrap();
+        let items = list(d.path()).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "a");
     }
 
     #[test]
