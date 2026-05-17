@@ -29,6 +29,8 @@ pub struct Request {
     pub headers: IndexMap<String, String>,
     #[serde(default)]
     pub query: IndexMap<String, String>,
+    #[serde(default)]
+    pub path: IndexMap<String, String>,
     pub body: Option<BodySpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openapi: Option<OpenApiMark>,
@@ -40,6 +42,18 @@ pub struct OpenApiMark {
     pub path: String,
     pub spec_version: String,
     pub generated_hash: String,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub responses: IndexMap<String, OpenApiResponseInfo>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct OpenApiResponseInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

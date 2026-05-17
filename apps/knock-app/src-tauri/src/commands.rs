@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use knock_core::{execute, init_at, parser, resolve, OpenApiMark, Workspace};
+use knock_core::{execute, init_at, parser, resolve, OpenApiMark, OpenApiResponseInfo, Workspace};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -54,6 +54,8 @@ pub struct RequestFormDto {
     pub uses: Vec<String>,
     pub headers: Vec<KvDto>,
     pub query: Vec<KvDto>,
+    #[serde(default)]
+    pub path: Vec<KvDto>,
     pub body: BodyDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openapi: Option<OpenApiMarkDto>,
@@ -66,6 +68,39 @@ pub struct OpenApiMarkDto {
     pub path: String,
     pub spec_version: String,
     pub generated_hash: String,
+    #[serde(default)]
+    pub responses: IndexMap<String, OpenApiResponseInfoDto>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenApiResponseInfoDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+}
+
+impl From<OpenApiResponseInfo> for OpenApiResponseInfoDto {
+    fn from(r: OpenApiResponseInfo) -> Self {
+        Self {
+            description: r.description,
+            content_type: r.content_type,
+            example: r.example,
+        }
+    }
+}
+
+impl From<OpenApiResponseInfoDto> for OpenApiResponseInfo {
+    fn from(r: OpenApiResponseInfoDto) -> Self {
+        Self {
+            description: r.description,
+            content_type: r.content_type,
+            example: r.example,
+        }
+    }
 }
 
 impl From<OpenApiMark> for OpenApiMarkDto {
@@ -75,6 +110,11 @@ impl From<OpenApiMark> for OpenApiMarkDto {
             path: m.path,
             spec_version: m.spec_version,
             generated_hash: m.generated_hash,
+            responses: m
+                .responses
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
         }
     }
 }
@@ -86,6 +126,11 @@ impl From<OpenApiMarkDto> for OpenApiMark {
             path: m.path,
             spec_version: m.spec_version,
             generated_hash: m.generated_hash,
+            responses: m
+                .responses
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
         }
     }
 }
@@ -1147,6 +1192,11 @@ fn request_to_form(r: knock_core::Request) -> RequestFormDto {
             .into_iter()
             .map(|(key, value)| KvDto { key, value })
             .collect(),
+        path: r
+            .path
+            .into_iter()
+            .map(|(key, value)| KvDto { key, value })
+            .collect(),
         body,
         openapi: r.openapi.map(Into::into),
     }
@@ -1165,11 +1215,23 @@ struct TomlBody<'a> {
 }
 
 #[derive(Serialize)]
+struct TomlOpenApiResponse<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    example: Option<&'a str>,
+}
+
+#[derive(Serialize)]
 struct TomlOpenApi<'a> {
     operation_id: &'a str,
     path: &'a str,
     spec_version: &'a str,
     generated_hash: &'a str,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    responses: IndexMap<String, TomlOpenApiResponse<'a>>,
 }
 
 #[derive(Serialize)]
@@ -1180,6 +1242,8 @@ struct TomlRequest<'a> {
     url: &'a str,
     #[serde(rename = "use", skip_serializing_if = "<[_]>::is_empty")]
     uses: &'a [String],
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    path: IndexMap<String, String>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     query: IndexMap<String, String>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
@@ -1248,11 +1312,32 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         }
     };
 
+    let path: IndexMap<String, String> = form
+        .path
+        .iter()
+        .filter(|kv| !kv.key.is_empty())
+        .map(|kv| (kv.key.clone(), kv.value.clone()))
+        .collect();
+
     let openapi = form.openapi.as_ref().map(|m| TomlOpenApi {
         operation_id: m.operation_id.as_str(),
         path: m.path.as_str(),
         spec_version: m.spec_version.as_str(),
         generated_hash: m.generated_hash.as_str(),
+        responses: m
+            .responses
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    TomlOpenApiResponse {
+                        description: v.description.as_deref(),
+                        content_type: v.content_type.as_deref(),
+                        example: v.example.as_deref(),
+                    },
+                )
+            })
+            .collect(),
     });
 
     let req = TomlRequest {
@@ -1260,6 +1345,7 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         method: &form.method,
         url: &form.url,
         uses: &form.uses,
+        path,
         query,
         headers,
         body,

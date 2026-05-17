@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenApiError {
@@ -43,9 +44,18 @@ pub struct Operation {
     pub path: String,
     pub tag: Option<String>,
     pub summary: Option<String>,
+    pub path_params: IndexMap<String, String>,
     pub query_params: IndexMap<String, String>,
     pub header_params: IndexMap<String, String>,
     pub body_json: Option<serde_json::Value>,
+    pub responses: IndexMap<String, ResponseSchema>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ResponseSchema {
+    pub description: Option<String>,
+    pub content_type: Option<String>,
+    pub example: Option<serde_json::Value>,
 }
 
 pub fn parse_spec(bytes: &[u8]) -> Result<NormalizedSpec, OpenApiError> {
@@ -87,6 +97,53 @@ fn parse_to_value(bytes: &[u8]) -> Result<serde_json::Value, OpenApiError> {
     }
 }
 
+/// Walks JSON pointer style $ref: "#/components/schemas/Pet"
+fn resolve_pointer<'a>(
+    root: &'a serde_json::Value,
+    pointer: &str,
+) -> Option<&'a serde_json::Value> {
+    let trimmed = pointer.strip_prefix('#')?;
+    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    if trimmed.is_empty() {
+        return Some(root);
+    }
+    let mut current = root;
+    for raw_part in trimmed.split('/') {
+        let part = raw_part.replace("~1", "/").replace("~0", "~");
+        match current {
+            serde_json::Value::Object(map) => {
+                current = map.get(&part)?;
+            }
+            serde_json::Value::Array(arr) => {
+                let idx: usize = part.parse().ok()?;
+                current = arr.get(idx)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
+}
+
+struct Resolver<'a> {
+    root: &'a serde_json::Value,
+}
+
+impl<'a> Resolver<'a> {
+    fn new(root: &'a serde_json::Value) -> Self {
+        Self { root }
+    }
+
+    /// Resolves a $ref one step; returns the referenced node if any.
+    fn deref(&self, value: &'a serde_json::Value) -> &'a serde_json::Value {
+        if let Some(p) = value.get("$ref").and_then(|v| v.as_str()) {
+            if let Some(target) = resolve_pointer(self.root, p) {
+                return target;
+            }
+        }
+        value
+    }
+}
+
 fn parse_openapi3(
     value: &serde_json::Value,
     format: SpecFormat,
@@ -109,9 +166,12 @@ fn parse_openapi3(
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    let resolver = Resolver::new(value);
+
     let mut operations = Vec::new();
     if let Some(paths) = value.get("paths").and_then(|p| p.as_object()) {
         for (path, path_item) in paths {
+            let path_item = resolver.deref(path_item);
             let Some(item_obj) = path_item.as_object() else {
                 continue;
             };
@@ -130,7 +190,7 @@ fn parse_openapi3(
                 if let Some(arr) = op.get("parameters").and_then(|v| v.as_array()) {
                     parameters.extend(arr.iter().cloned());
                 }
-                operations.push(build_operation_oa3(method, path, op, &parameters));
+                operations.push(build_operation_oa3(&resolver, method, path, op, &parameters));
             }
         }
     }
@@ -145,6 +205,7 @@ fn parse_openapi3(
 }
 
 fn build_operation_oa3(
+    resolver: &Resolver,
     method: &str,
     path: &str,
     op: &serde_json::Value,
@@ -166,16 +227,21 @@ fn build_operation_oa3(
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    let mut path_params = IndexMap::new();
     let mut query_params = IndexMap::new();
     let mut header_params = IndexMap::new();
-    for p in parameters {
+    for raw in parameters {
+        let p = resolver.deref(raw);
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let location = p.get("in").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() {
             continue;
         }
-        let example = parameter_example(p);
+        let example = parameter_example(resolver, p);
         match location {
+            "path" => {
+                path_params.insert(name.to_string(), example);
+            }
             "query" => {
                 query_params.insert(name.to_string(), example);
             }
@@ -188,9 +254,71 @@ fn build_operation_oa3(
 
     let body_json = op
         .get("requestBody")
+        .map(|rb| resolver.deref(rb))
         .and_then(|rb| rb.get("content"))
-        .and_then(|c| c.get("application/json"))
-        .and_then(|j| j.get("example").cloned().or_else(|| schema_example(j.get("schema"))));
+        .and_then(|c| {
+            c.get("application/json")
+                .or_else(|| c.get("application/*+json"))
+        })
+        .and_then(|j| {
+            if let Some(ex) = j.get("example") {
+                Some(ex.clone())
+            } else if let Some(examples) = j.get("examples").and_then(|v| v.as_object()) {
+                examples
+                    .values()
+                    .next()
+                    .and_then(|e| e.get("value").cloned())
+            } else {
+                let schema = j.get("schema");
+                schema.and_then(|s| schema_to_example(resolver, s, &mut HashSet::new()))
+            }
+        });
+
+    let mut responses = IndexMap::new();
+    if let Some(resps) = op.get("responses").and_then(|v| v.as_object()) {
+        for (code, raw) in resps {
+            let r = resolver.deref(raw);
+            let description = r
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let (content_type, example) = if let Some(content) =
+                r.get("content").and_then(|c| c.as_object())
+            {
+                let key = content
+                    .keys()
+                    .find(|k| k.starts_with("application/json") || k.contains("+json"))
+                    .cloned()
+                    .or_else(|| content.keys().next().cloned());
+                let example = key.as_deref().and_then(|k| {
+                    let media = content.get(k)?;
+                    if let Some(ex) = media.get("example") {
+                        return Some(ex.clone());
+                    }
+                    if let Some(examples) = media.get("examples").and_then(|v| v.as_object()) {
+                        if let Some(first) = examples.values().next() {
+                            if let Some(v) = first.get("value") {
+                                return Some(v.clone());
+                            }
+                        }
+                    }
+                    let schema = media.get("schema")?;
+                    schema_to_example(resolver, schema, &mut HashSet::new())
+                });
+                (key, example)
+            } else {
+                (None, None)
+            };
+            responses.insert(
+                code.clone(),
+                ResponseSchema {
+                    description,
+                    content_type,
+                    example,
+                },
+            );
+        }
+    }
 
     Operation {
         operation_id,
@@ -198,9 +326,11 @@ fn build_operation_oa3(
         path: path.to_string(),
         tag,
         summary,
+        path_params,
         query_params,
         header_params,
         body_json,
+        responses,
     }
 }
 
@@ -232,6 +362,8 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
         Some(format!("{scheme}://{host}{base_path}"))
     };
 
+    let resolver = Resolver::new(value);
+
     let mut operations = Vec::new();
     if let Some(paths) = value.get("paths").and_then(|p| p.as_object()) {
         for (path, path_item) in paths {
@@ -253,7 +385,9 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
                 if let Some(arr) = op.get("parameters").and_then(|v| v.as_array()) {
                     parameters.extend(arr.iter().cloned());
                 }
-                operations.push(build_operation_swagger2(method, path, op, &parameters));
+                operations.push(build_operation_swagger2(
+                    &resolver, method, path, op, &parameters,
+                ));
             }
         }
     }
@@ -268,6 +402,7 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
 }
 
 fn build_operation_swagger2(
+    resolver: &Resolver,
     method: &str,
     path: &str,
     op: &serde_json::Value,
@@ -289,26 +424,55 @@ fn build_operation_swagger2(
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    let mut path_params = IndexMap::new();
     let mut query_params = IndexMap::new();
     let mut header_params = IndexMap::new();
     let mut body_json = None;
-    for p in parameters {
+    for raw in parameters {
+        let p = resolver.deref(raw);
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let location = p.get("in").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() {
             continue;
         }
         match location {
+            "path" => {
+                path_params.insert(name.to_string(), parameter_example(resolver, p));
+            }
             "query" => {
-                query_params.insert(name.to_string(), parameter_example(p));
+                query_params.insert(name.to_string(), parameter_example(resolver, p));
             }
             "header" => {
-                header_params.insert(name.to_string(), parameter_example(p));
+                header_params.insert(name.to_string(), parameter_example(resolver, p));
             }
             "body" => {
-                body_json = schema_example(p.get("schema"));
+                if let Some(schema) = p.get("schema") {
+                    body_json = schema_to_example(resolver, schema, &mut HashSet::new());
+                }
             }
             _ => {}
+        }
+    }
+
+    let mut responses = IndexMap::new();
+    if let Some(resps) = op.get("responses").and_then(|v| v.as_object()) {
+        for (code, raw) in resps {
+            let r = resolver.deref(raw);
+            let description = r
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let example = r
+                .get("schema")
+                .and_then(|s| schema_to_example(resolver, s, &mut HashSet::new()));
+            responses.insert(
+                code.clone(),
+                ResponseSchema {
+                    description,
+                    content_type: Some("application/json".into()),
+                    example,
+                },
+            );
         }
     }
 
@@ -318,67 +482,198 @@ fn build_operation_swagger2(
         path: path.to_string(),
         tag,
         summary,
+        path_params,
         query_params,
         header_params,
         body_json,
+        responses,
     }
 }
 
-fn parameter_example(p: &serde_json::Value) -> String {
-    if let Some(s) = p.get("example").and_then(|v| v.as_str()) {
-        return s.to_string();
-    }
+fn parameter_example(resolver: &Resolver, p: &serde_json::Value) -> String {
     if let Some(v) = p.get("example") {
-        return v.to_string();
+        return value_to_string(v);
     }
-    if let Some(s) = p
-        .get("schema")
-        .and_then(|s| s.get("example"))
-        .and_then(|v| v.as_str())
-    {
-        return s.to_string();
+    if let Some(schema) = p.get("schema") {
+        let schema = resolver.deref(schema);
+        if let Some(ex) = schema.get("example") {
+            return value_to_string(ex);
+        }
+        if let Some(def) = schema.get("default") {
+            return value_to_string(def);
+        }
+        if let Some(ex) = schema_to_example(resolver, schema, &mut HashSet::new()) {
+            if matches!(ex, serde_json::Value::String(_) | serde_json::Value::Number(_) | serde_json::Value::Bool(_)) {
+                return value_to_string(&ex);
+            }
+        }
     }
-    if let Some(s) = p
-        .get("schema")
-        .and_then(|s| s.get("default"))
-        .and_then(|v| v.as_str())
-    {
-        return s.to_string();
+    // Swagger 2 puts type+format directly on the parameter
+    if let Some(ex) = p.get("default") {
+        return value_to_string(ex);
+    }
+    if let Some(ty) = p.get("type").and_then(|v| v.as_str()) {
+        return type_placeholder(ty, p.get("format").and_then(|v| v.as_str()));
     }
     String::new()
 }
 
-fn schema_example(schema: Option<&serde_json::Value>) -> Option<serde_json::Value> {
-    let s = schema?;
-    if let Some(ex) = s.get("example") {
+fn value_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn type_placeholder(ty: &str, format: Option<&str>) -> String {
+    match ty {
+        "string" => match format.unwrap_or("") {
+            "uuid" => "00000000-0000-0000-0000-000000000000".into(),
+            "date-time" => "1970-01-01T00:00:00Z".into(),
+            "date" => "1970-01-01".into(),
+            "email" => "user@example.com".into(),
+            _ => String::new(),
+        },
+        "integer" | "number" => "0".into(),
+        "boolean" => "false".into(),
+        _ => String::new(),
+    }
+}
+
+/// Recursive schema-to-example with $ref resolution, allOf merging,
+/// oneOf/anyOf picking the first branch, and cycle protection.
+fn schema_to_example(
+    resolver: &Resolver,
+    schema: &serde_json::Value,
+    visited: &mut HashSet<String>,
+) -> Option<serde_json::Value> {
+    // Direct $ref: track to avoid cycles.
+    if let Some(p) = schema.get("$ref").and_then(|v| v.as_str()) {
+        if !visited.insert(p.to_string()) {
+            return Some(serde_json::Value::Null);
+        }
+        let target = resolve_pointer(resolver.root, p)?;
+        let result = schema_to_example(resolver, target, visited);
+        visited.remove(p);
+        return result;
+    }
+
+    if let Some(ex) = schema.get("example") {
         return Some(ex.clone());
     }
-    let ty = s.get("type").and_then(|v| v.as_str()).unwrap_or("object");
-    match ty {
-        "object" => {
+    if let Some(def) = schema.get("default") {
+        return Some(def.clone());
+    }
+
+    // allOf: merge object schemas
+    if let Some(arr) = schema.get("allOf").and_then(|v| v.as_array()) {
+        let mut merged = serde_json::Map::new();
+        for sub in arr {
+            if let Some(serde_json::Value::Object(obj)) =
+                schema_to_example(resolver, sub, visited)
+            {
+                for (k, v) in obj {
+                    merged.insert(k, v);
+                }
+            }
+        }
+        if !merged.is_empty() {
+            return Some(serde_json::Value::Object(merged));
+        }
+    }
+
+    // oneOf / anyOf: first branch
+    for key in &["oneOf", "anyOf"] {
+        if let Some(arr) = schema.get(*key).and_then(|v| v.as_array()) {
+            if let Some(first) = arr.first() {
+                return schema_to_example(resolver, first, visited);
+            }
+        }
+    }
+
+    // enum: pick first value
+    if let Some(arr) = schema.get("enum").and_then(|v| v.as_array()) {
+        if let Some(first) = arr.first() {
+            return Some(first.clone());
+        }
+    }
+
+    let ty = infer_type(schema);
+    match ty.as_deref() {
+        Some("object") => {
             let mut map = serde_json::Map::new();
-            if let Some(props) = s.get("properties").and_then(|v| v.as_object()) {
+            let required: HashSet<String> = schema
+                .get("required")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(props) = schema.get("properties").and_then(|v| v.as_object()) {
                 for (k, sub) in props {
-                    if let Some(v) = schema_example(Some(sub)) {
-                        map.insert(k.clone(), v);
-                    } else {
+                    let is_required = required.contains(k);
+                    // include all properties; required ones get richer defaults.
+                    let ex = schema_to_example(resolver, sub, visited)
+                        .unwrap_or(serde_json::Value::Null);
+                    if !is_required && matches!(ex, serde_json::Value::Null) {
                         map.insert(k.clone(), serde_json::Value::Null);
+                    } else {
+                        map.insert(k.clone(), ex);
+                    }
+                }
+            }
+            if let Some(add) = schema.get("additionalProperties") {
+                if add.is_object() {
+                    if let Some(ex) = schema_to_example(resolver, add, visited) {
+                        map.insert("key".into(), ex);
                     }
                 }
             }
             Some(serde_json::Value::Object(map))
         }
-        "array" => {
-            let item = s
+        Some("array") => {
+            let item = schema
                 .get("items")
-                .and_then(|i| schema_example(Some(i)))
+                .and_then(|i| schema_to_example(resolver, i, visited))
                 .unwrap_or(serde_json::Value::Null);
             Some(serde_json::Value::Array(vec![item]))
         }
-        "string" => Some(serde_json::Value::String(String::new())),
-        "integer" | "number" => Some(serde_json::json!(0)),
-        "boolean" => Some(serde_json::Value::Bool(false)),
+        Some("string") => {
+            let fmt = schema.get("format").and_then(|v| v.as_str());
+            let placeholder = type_placeholder("string", fmt);
+            Some(serde_json::Value::String(placeholder))
+        }
+        Some("integer") => Some(serde_json::json!(0)),
+        Some("number") => Some(serde_json::json!(0.0)),
+        Some("boolean") => Some(serde_json::Value::Bool(false)),
+        Some("null") => Some(serde_json::Value::Null),
         _ => None,
+    }
+}
+
+/// OpenAPI 3.1 allows `type` to be array (e.g. ["string","null"]). Prefer first
+/// non-null entry.
+fn infer_type(schema: &serde_json::Value) -> Option<String> {
+    match schema.get("type") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .find(|s| *s != "null")
+            .map(String::from),
+        _ => {
+            // No explicit type; infer object if "properties" present.
+            if schema.get("properties").is_some() || schema.get("required").is_some() {
+                Some("object".into())
+            } else if schema.get("items").is_some() {
+                Some("array".into())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -481,7 +776,7 @@ mod tests {
 
     #[test]
     fn parses_openapi3_minimal() {
-        let spec = br#"{
+        let spec = br##"{
           "openapi": "3.1.0",
           "info": { "title": "Demo", "version": "1.0.0" },
           "servers": [{ "url": "https://api.example.com" }],
@@ -492,13 +787,13 @@ mod tests {
                 "tags": ["pets"],
                 "summary": "Get pet by id",
                 "parameters": [
-                  { "name": "id", "in": "path", "required": true },
-                  { "name": "expand", "in": "query" }
+                  { "name": "id", "in": "path", "required": true, "schema": {"type": "integer"} },
+                  { "name": "expand", "in": "query", "schema": {"type": "string"} }
                 ]
               }
             }
           }
-        }"#;
+        }"##;
         let parsed = parse_spec(spec).unwrap();
         assert_eq!(parsed.format, SpecFormat::OpenApi31);
         assert_eq!(parsed.operations.len(), 1);
@@ -506,7 +801,142 @@ mod tests {
         assert_eq!(op.operation_id, "getPet");
         assert_eq!(op.method, "GET");
         assert_eq!(op.tag.as_deref(), Some("pets"));
+        assert_eq!(op.path_params.get("id").map(|s| s.as_str()), Some("0"));
         assert!(op.query_params.contains_key("expand"));
+    }
+
+    #[test]
+    fn resolves_ref_and_builds_body() {
+        let spec = br##"{
+          "openapi": "3.0.3",
+          "info": {"title": "x", "version": "1"},
+          "paths": {
+            "/pets": {
+              "post": {
+                "operationId": "addPet",
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {"$ref": "#/components/schemas/Pet"}
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok",
+                    "content": {
+                      "application/json": {
+                        "schema": {"$ref": "#/components/schemas/Pet"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "components": {
+            "schemas": {
+              "Pet": {
+                "type": "object",
+                "required": ["id", "name"],
+                "properties": {
+                  "id": {"type": "integer"},
+                  "name": {"type": "string"},
+                  "tags": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/Tag"}
+                  }
+                }
+              },
+              "Tag": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "integer"},
+                  "name": {"type": "string"}
+                }
+              }
+            }
+          }
+        }"##;
+        let parsed = parse_spec(spec).unwrap();
+        let op = &parsed.operations[0];
+        let body = op.body_json.as_ref().unwrap();
+        assert!(body.get("id").is_some());
+        assert!(body.get("name").is_some());
+        let tags = body.get("tags").unwrap().as_array().unwrap();
+        assert_eq!(tags.len(), 1);
+        assert!(tags[0].get("id").is_some());
+
+        let r200 = op.responses.get("200").unwrap();
+        assert_eq!(r200.description.as_deref(), Some("ok"));
+        assert!(r200.example.is_some());
+    }
+
+    #[test]
+    fn allof_merges_object_schemas() {
+        let spec = br##"{
+          "openapi": "3.0.0",
+          "info": {"title":"x","version":"1"},
+          "paths": {
+            "/x": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "allOf": [
+                          {"type":"object","properties":{"a":{"type":"string"}}},
+                          {"type":"object","properties":{"b":{"type":"integer"}}}
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {}
+              }
+            }
+          }
+        }"##;
+        let parsed = parse_spec(spec).unwrap();
+        let body = parsed.operations[0].body_json.as_ref().unwrap();
+        assert!(body.get("a").is_some());
+        assert!(body.get("b").is_some());
+    }
+
+    #[test]
+    fn cycle_protection() {
+        let spec = br##"{
+          "openapi": "3.0.0",
+          "info": {"title":"x","version":"1"},
+          "paths": {
+            "/x": {
+              "get": {
+                "responses": {
+                  "200": {
+                    "description":"d",
+                    "content": {
+                      "application/json": {"schema": {"$ref":"#/components/schemas/Node"}}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "components": {
+            "schemas": {
+              "Node": {
+                "type":"object",
+                "properties": {
+                  "child": {"$ref": "#/components/schemas/Node"}
+                }
+              }
+            }
+          }
+        }"##;
+        // Must not stack overflow.
+        let parsed = parse_spec(spec).unwrap();
+        let op = &parsed.operations[0];
+        assert!(op.responses.contains_key("200"));
     }
 
     #[test]

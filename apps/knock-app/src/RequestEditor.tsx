@@ -15,7 +15,7 @@ interface Props {
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-type Tab = "params" | "body" | "headers" | "use";
+type Tab = "params" | "path" | "body" | "headers" | "use" | "responses";
 
 function methodClass(method: string): string {
   const m = method.toUpperCase();
@@ -31,27 +31,42 @@ function methodClass(method: string): string {
 export function RequestEditor({ form, vars, running, onChange, onSend }: Props) {
   const [tab, setTab] = useState<Tab>("params");
 
+  const pathParams = form.path ?? [];
+  const responses = form.openapi?.responses ?? {};
+  const responseEntries = Object.entries(responses);
+
+  // Path params merge into the effective vars used for the URL preview.
+  const effectiveVars = useMemo(() => {
+    const merged: Record<string, string> = { ...vars };
+    for (const kv of pathParams) {
+      if (kv.key) merged[kv.key] = kv.value;
+    }
+    return merged;
+  }, [vars, pathParams]);
+
   const fullUrl = useMemo(() => {
-    let base = interpolate(form.url, vars);
+    let base = interpolate(form.url, effectiveVars);
     const params = form.query.filter((q) => q.key.trim() !== "");
     if (params.length === 0) return base;
     const qs = params
       .map(
         (q) =>
-          `${encodeURIComponent(interpolate(q.key, vars))}=${encodeURIComponent(interpolate(q.value, vars))}`,
+          `${encodeURIComponent(interpolate(q.key, effectiveVars))}=${encodeURIComponent(interpolate(q.value, effectiveVars))}`,
       )
       .join("&");
     base += base.includes("?") ? `&${qs}` : `?${qs}`;
     return base;
-  }, [form.url, form.query, vars]);
+  }, [form.url, form.query, effectiveVars]);
 
   const urlUnresolved = useMemo(
     () =>
-      hasUnresolvedVars(form.url, vars) ||
+      hasUnresolvedVars(form.url, effectiveVars) ||
       form.query.some(
-        (q) => hasUnresolvedVars(q.key, vars) || hasUnresolvedVars(q.value, vars),
+        (q) =>
+          hasUnresolvedVars(q.key, effectiveVars) ||
+          hasUnresolvedVars(q.value, effectiveVars),
       ),
-    [form.url, form.query, vars],
+    [form.url, form.query, effectiveVars],
   );
 
   return (
@@ -107,6 +122,14 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
         >
           Params {form.query.length > 0 && <span className="badge">{form.query.length}</span>}
         </button>
+        {pathParams.length > 0 && (
+          <button
+            className={tab === "path" ? "tab active" : "tab"}
+            onClick={() => setTab("path")}
+          >
+            Path <span className="badge">{pathParams.length}</span>
+          </button>
+        )}
         <button
           className={tab === "body" ? "tab active" : "tab"}
           onClick={() => setTab("body")}
@@ -125,28 +148,44 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
         >
           Use {form.uses.length > 0 && <span className="badge">{form.uses.length}</span>}
         </button>
+        {responseEntries.length > 0 && (
+          <button
+            className={tab === "responses" ? "tab active" : "tab"}
+            onClick={() => setTab("responses")}
+          >
+            Responses <span className="badge">{responseEntries.length}</span>
+          </button>
+        )}
       </div>
 
       <div className="tab-body">
         {tab === "params" && (
           <KVTable
             rows={form.query}
-            vars={vars}
+            vars={effectiveVars}
             keyPlaceholder="parameter"
             onChange={(query) => onChange({ ...form, query })}
+          />
+        )}
+        {tab === "path" && (
+          <KVTable
+            rows={pathParams}
+            vars={effectiveVars}
+            keyPlaceholder="path variable"
+            onChange={(next) => onChange({ ...form, path: next })}
           />
         )}
         {tab === "body" && (
           <BodyTab
             body={form.body}
-            vars={vars}
+            vars={effectiveVars}
             onChange={(body) => onChange({ ...form, body })}
           />
         )}
         {tab === "headers" && (
           <KVTable
             rows={form.headers}
-            vars={vars}
+            vars={effectiveVars}
             keyPlaceholder="header"
             onChange={(headers) => onChange({ ...form, headers })}
           />
@@ -157,7 +196,76 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
             onChange={(uses) => onChange({ ...form, uses })}
           />
         )}
+        {tab === "responses" && <ResponsesPanel entries={responseEntries} />}
       </div>
+    </div>
+  );
+}
+
+function ResponsesPanel({
+  entries,
+}: {
+  entries: [string, { description?: string | null; contentType?: string | null; example?: string | null }][];
+}) {
+  return (
+    <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 12 }}>
+      {entries.map(([code, info]) => (
+        <div
+          key={code}
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            background: "var(--panel-2, #1a1a1a)",
+          }}
+        >
+          <div
+            style={{
+              padding: "6px 10px",
+              borderBottom: info.example ? "1px solid var(--border)" : "none",
+              display: "flex",
+              gap: 8,
+              alignItems: "baseline",
+            }}
+          >
+            <span
+              style={{
+                fontFamily: "var(--mono)",
+                fontWeight: 700,
+                color: code.startsWith("2")
+                  ? "#22c55e"
+                  : code.startsWith("4")
+                    ? "#eab308"
+                    : code.startsWith("5")
+                      ? "#ef4444"
+                      : "#64748b",
+              }}
+            >
+              {code}
+            </span>
+            <span style={{ opacity: 0.8 }}>{info.description ?? ""}</span>
+            {info.contentType && (
+              <span style={{ marginLeft: "auto", opacity: 0.5, fontSize: 11 }}>
+                {info.contentType}
+              </span>
+            )}
+          </div>
+          {info.example && (
+            <pre
+              style={{
+                margin: 0,
+                padding: 10,
+                fontFamily: "var(--mono)",
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+                overflow: "auto",
+                maxHeight: 260,
+              }}
+            >
+              {info.example}
+            </pre>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

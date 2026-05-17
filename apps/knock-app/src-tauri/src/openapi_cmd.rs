@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::commands::{
-    emit_request_toml_pub, BodyDto, KvDto, OpenApiMarkDto, RequestFormDto, TreeEntry,
+    emit_request_toml_pub, BodyDto, KvDto, OpenApiMarkDto, OpenApiResponseInfoDto, RequestFormDto,
+    TreeEntry,
 };
 
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -271,11 +272,30 @@ pub fn openapi_apply_import(
                 let target_rel = target_rel_for(op);
                 let toml_no_mark = emit_request_toml_pub(&form)?;
                 let hash = openapi::generated_hash(&strip_openapi_section(&toml_no_mark));
+                let responses: IndexMap<String, OpenApiResponseInfoDto> = op
+                    .responses
+                    .iter()
+                    .map(|(code, r)| {
+                        let example_str = r
+                            .example
+                            .as_ref()
+                            .and_then(|v| serde_json::to_string_pretty(v).ok());
+                        (
+                            code.clone(),
+                            OpenApiResponseInfoDto {
+                                description: r.description.clone(),
+                                content_type: r.content_type.clone(),
+                                example: example_str,
+                            },
+                        )
+                    })
+                    .collect();
                 let mark = OpenApiMarkDto {
                     operation_id: op.operation_id.clone(),
                     path: op.path.clone(),
                     spec_version: spec.version.clone(),
                     generated_hash: hash.clone(),
+                    responses,
                 };
                 let mut marked_form = form.clone();
                 marked_form.openapi = Some(mark);
@@ -520,6 +540,14 @@ fn operation_to_request_form(op: &Operation, _spec: &NormalizedSpec) -> RequestF
             .collect(),
         query: op
             .query_params
+            .iter()
+            .map(|(k, v)| KvDto {
+                key: k.clone(),
+                value: v.clone(),
+            })
+            .collect(),
+        path: op
+            .path_params
             .iter()
             .map(|(k, v)| KvDto {
                 key: k.clone(),

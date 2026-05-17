@@ -47,11 +47,18 @@ export type BodyForm =
   | { kind: "form"; form: KV[] }
   | { kind: "file"; path: string };
 
+export interface OpenApiResponseInfo {
+  description?: string | null;
+  contentType?: string | null;
+  example?: string | null;
+}
+
 export interface OpenApiMark {
   operationId: string;
   path: string;
   specVersion: string;
   generatedHash: string;
+  responses?: Record<string, OpenApiResponseInfo>;
 }
 
 export interface RequestForm {
@@ -61,6 +68,7 @@ export interface RequestForm {
   uses: string[];
   headers: KV[];
   query: KV[];
+  path?: KV[];
   body: BodyForm;
   openapi?: OpenApiMark | null;
 }

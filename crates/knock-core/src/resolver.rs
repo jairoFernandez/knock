@@ -108,12 +108,19 @@ pub fn resolve_with_vars(
         query.insert(k.clone(), v.clone());
     }
 
-    let url = interpolate(&request.url, vars)?;
-    let headers = interpolate_map(&headers, vars)?;
-    let query = interpolate_map(&query, vars)?;
+    // Path params merged into vars so {{petId}} in url resolves from request.path
+    // without leaking into env. Request-scoped values take precedence over env.
+    let mut effective_vars: IndexMap<String, String> = vars.clone();
+    for (k, v) in &request.path {
+        effective_vars.insert(k.clone(), v.clone());
+    }
+
+    let url = interpolate(&request.url, &effective_vars)?;
+    let headers = interpolate_map(&headers, &effective_vars)?;
+    let query = interpolate_map(&query, &effective_vars)?;
 
     let body = match request.body.as_ref() {
-        Some(spec) => Some(resolve_body(spec, request_path, vars)?),
+        Some(spec) => Some(resolve_body(spec, request_path, &effective_vars)?),
         None => None,
     };
 
