@@ -51,6 +51,14 @@ interface RepoMeta {
   stars: number | null;
 }
 
+interface VersionInfo {
+  version: string;
+  commit: string;
+  commitShort: string;
+  commitUrl: string;
+  releaseUrl: string;
+}
+
 interface SystemStats {
   cpuPercent: number;
   memUsed: number;
@@ -119,6 +127,7 @@ function PerfBadge() {
 
 export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, onScaleChange }: Props) {
   const [meta, setMeta] = useState<RepoMeta>({ stars: null });
+  const [version, setVersion] = useState<VersionInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +142,11 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, 
       .catch(() => {
         /* offline ok */
       });
+    invoke<VersionInfo>("version_info")
+      .then((v) => {
+        if (!cancelled) setVersion(v);
+      })
+      .catch((e) => console.error("version_info failed", e));
     return () => {
       cancelled = true;
     };
@@ -141,6 +155,24 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, 
   async function openRepo() {
     try {
       await invoke("open_url", { url: REPO_URL });
+    } catch (e) {
+      console.error("open_url failed", e);
+    }
+  }
+
+  async function openVersion() {
+    if (!version) return;
+    try {
+      await invoke("open_url", { url: version.releaseUrl });
+    } catch (e) {
+      console.error("open_url failed", e);
+    }
+  }
+
+  async function openCommit() {
+    if (!version) return;
+    try {
+      await invoke("open_url", { url: version.commitUrl });
     } catch (e) {
       console.error("open_url failed", e);
     }
@@ -170,6 +202,27 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, 
           <ZoomControl scale={scale} onChange={onScaleChange} />
         )}
         <PerfBadge />
+        {version && (
+          <span
+            className="statusbar-item version"
+            title={`Version ${version.version} · commit ${version.commit}`}
+          >
+            <button
+              className="version-tag"
+              onClick={openVersion}
+              title={`Open release ${version.version} on GitHub`}
+            >
+              {version.version}
+            </button>
+            <button
+              className="version-commit"
+              onClick={openCommit}
+              title={`Open commit ${version.commit} on GitHub`}
+            >
+              @{version.commitShort}
+            </button>
+          </span>
+        )}
         <button
           className="statusbar-item link"
           onClick={openRepo}

@@ -42,6 +42,21 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
+      - name: Publish version info
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          SHA="${{ github.sha }}"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          RELEASE_URL="${REPO_URL}/releases/tag/${TAG}"
+          COMMIT_URL="${REPO_URL}/commit/${SHA}"
+          {
+            echo "## Release ${TAG}"
+            echo ""
+            echo "- **Tag:** [\`${TAG}\`](${RELEASE_URL})"
+            echo "- **Commit:** [\`${SHA}\`](${COMMIT_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Release ${TAG}::${RELEASE_URL} (commit ${COMMIT_URL})"
+
   build-cli:
     name: Build CLI (${{ matrix.os_name }}-${{ matrix.arch }})
     needs: create-release
@@ -98,6 +113,12 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build CLI
+        env:
+          KNOCK_VERSION: ${{ needs.create-release.outputs.tag }}
+          KNOCK_COMMIT: ${{ github.sha }}
+          KNOCK_REPO: ${{ github.repository }}
+          KNOCK_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          KNOCK_RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.tag }}
         run: cargo build --release --bin knock --target ${{ matrix.target }}
 
       - name: Package
@@ -199,6 +220,11 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KNOCK_VERSION: ${{ needs.create-release.outputs.tag }}
+          KNOCK_COMMIT: ${{ github.sha }}
+          KNOCK_REPO: ${{ github.repository }}
+          KNOCK_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          KNOCK_RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.tag }}
         with:
           projectPath: apps/knock-app
           tagName: ${{ needs.create-release.outputs.tag }}

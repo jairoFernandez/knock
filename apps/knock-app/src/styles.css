@@ -2639,6 +2639,18 @@ textarea {
 .statusbar-item.dim { color: var(--text-faint); }
 .statusbar-item.link { cursor: pointer; }
 .statusbar-item.link:hover { color: var(--text); }
+.statusbar-item.version { gap: 0; }
+.version-tag, .version-commit {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.version-tag:hover, .version-commit:hover { color: var(--text); background: var(--panel-2); }
+.version-commit { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------- workspace appearance modal ---------- */
 .ws-palette {

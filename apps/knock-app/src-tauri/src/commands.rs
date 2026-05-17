@@ -1997,3 +1997,26 @@ pub fn get_system_stats() -> Result<SystemStats, String> {
         cores,
     })
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInfo {
+    version: &'static str,
+    commit: &'static str,
+    commit_short: String,
+    commit_url: &'static str,
+    release_url: &'static str,
+}
+
+#[tauri::command]
+pub fn version_info() -> VersionInfo {
+    let commit = env!("KNOCK_COMMIT");
+    let commit_short = commit.chars().take(7).collect::<String>();
+    VersionInfo {
+        version: env!("KNOCK_VERSION"),
+        commit,
+        commit_short,
+        commit_url: env!("KNOCK_COMMIT_URL"),
+        release_url: env!("KNOCK_RELEASE_URL"),
+    }
+}

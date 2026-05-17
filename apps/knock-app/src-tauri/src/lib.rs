@@ -66,6 +66,7 @@ pub fn run() {
             commands::update_request_method,
             commands::update_request_name,
             commands::get_system_stats,
+            commands::version_info,
             openapi_cmd::openapi_fetch,
             openapi_cmd::openapi_preview_import,
             openapi_cmd::openapi_apply_import,
