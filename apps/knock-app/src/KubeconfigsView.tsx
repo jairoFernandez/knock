@@ -215,16 +215,19 @@ export function KubeconfigsView() {
 
         <div className="kube-detail">
           {selected ? (
-            <>
+            <div className="kube-form">
               <div className="kube-section-title">Use '{selected}'</div>
-              <label className="kube-label">Passphrase</label>
-              <input
-                type="password"
-                value={revealPass}
-                onChange={(e) => setRevealPass(e.target.value)}
-                placeholder="Passphrase to decrypt"
-                autoComplete="off"
-              />
+              <div className="kube-field">
+                <label className="kube-label">Passphrase</label>
+                <input
+                  className="kube-input"
+                  type="password"
+                  value={revealPass}
+                  onChange={(e) => setRevealPass(e.target.value)}
+                  placeholder="Passphrase to decrypt"
+                  autoComplete="off"
+                />
+              </div>
               <div className="kube-actions">
                 <button className="primary" onClick={doReveal} disabled={busy}>
                   Decrypt
@@ -241,7 +244,9 @@ export function KubeconfigsView() {
                   <div className="kube-section-title">Decrypted</div>
                   <div className="kube-actions">
                     <button
-                      onClick={() => navigator.clipboard.writeText(revealed).catch(() => undefined)}
+                      onClick={() =>
+                        navigator.clipboard.writeText(revealed).catch(() => undefined)
+                      }
                     >
                       Copy
                     </button>
@@ -250,64 +255,80 @@ export function KubeconfigsView() {
                   <textarea className="kube-textarea" readOnly value={revealed} />
                 </>
               )}
-            </>
+            </div>
           ) : (
             <div className="kube-empty">Select a kubeconfig on the left, or add one below.</div>
           )}
 
           <div className="kube-section-title">Add new</div>
-          <div className="kube-grid">
-            <label className="kube-label">Name</label>
-            <input
-              value={addName}
-              onChange={(e) => setAddName(sanitizeName(e.target.value))}
-              placeholder="prod-cluster"
-              autoComplete="off"
-            />
-            <label className="kube-label">Source</label>
-            <div className="kube-actions">
-              <button onClick={pickFile} disabled={busy}>
-                Pick file…
-              </button>
-              <span className="kube-subtle">
-                {addContent ? `${addContent.length} chars loaded` : "or paste below"}
-              </span>
+          <div className="kube-form">
+            <div className="kube-field-row">
+              <div className="kube-field">
+                <label className="kube-label">Name</label>
+                <input
+                  className="kube-input"
+                  value={addName}
+                  onChange={(e) => setAddName(sanitizeName(e.target.value))}
+                  placeholder="prod-cluster"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="kube-field">
+                <label className="kube-label">Source</label>
+                <div className="kube-actions">
+                  <button onClick={pickFile} disabled={busy}>
+                    Pick file…
+                  </button>
+                  <span className="kube-subtle">
+                    {addContent ? `${addContent.length} chars loaded` : "or paste below"}
+                  </span>
+                </div>
+              </div>
             </div>
-            <label className="kube-label">Content</label>
-            <textarea
-              className="kube-textarea"
-              value={addContent}
-              onChange={(e) => setAddContent(e.target.value)}
-              placeholder="apiVersion: v1\nkind: Config\n..."
-            />
-            <label className="kube-label">Passphrase</label>
-            <input
-              type="password"
-              value={addPass}
-              onChange={(e) => setAddPass(e.target.value)}
-              autoComplete="new-password"
-            />
-            <label className="kube-label">Confirm</label>
-            <input
-              type="password"
-              value={addPass2}
-              onChange={(e) => setAddPass2(e.target.value)}
-              autoComplete="new-password"
-            />
-            <label className="kube-label">Overwrite</label>
+            <div className="kube-field">
+              <label className="kube-label">Content</label>
+              <textarea
+                className="kube-textarea"
+                value={addContent}
+                onChange={(e) => setAddContent(e.target.value)}
+                placeholder={"apiVersion: v1\nkind: Config\n..."}
+              />
+            </div>
+            <div className="kube-field-row">
+              <div className="kube-field">
+                <label className="kube-label">Passphrase</label>
+                <input
+                  className="kube-input"
+                  type="password"
+                  value={addPass}
+                  onChange={(e) => setAddPass(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="kube-field">
+                <label className="kube-label">Confirm</label>
+                <input
+                  className="kube-input"
+                  type="password"
+                  value={addPass2}
+                  onChange={(e) => setAddPass2(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
             <label className="kube-checkbox">
               <input
                 type="checkbox"
                 checked={addOverwrite}
                 onChange={(e) => setAddOverwrite(e.target.checked)}
               />
-              <span>Replace if name exists</span>
+              <span>Overwrite if name exists</span>
             </label>
-          </div>
-          <div className="kube-actions">
-            <button className="primary" onClick={doAdd} disabled={busy}>
-              Encrypt & save
-            </button>
+            <div className="kube-actions">
+              <button className="primary" onClick={doAdd} disabled={busy}>
+                Encrypt & save
+              </button>
+            </div>
           </div>
         </div>
       </div>

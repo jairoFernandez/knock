@@ -503,7 +503,10 @@ export function App() {
 
   const toolsCols = activeTool ? ` 4px ${toolsWidth}px 36px` : ` 36px`;
   const appStyle: React.CSSProperties = {
-    gridTemplateColumns: `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
+    gridTemplateColumns:
+      railMode === "kube"
+        ? `44px ${sidebarWidth}px 4px minmax(0, 1fr)${toolsCols}`
+        : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
   if (workspace.color) {
     (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
@@ -1041,22 +1044,22 @@ export function App() {
         )}
       </div>
 
-      <Splitter
-        onDelta={(d) => setResponseWidth(clampWidth(responseWidth - d, 240, 1200))}
-      />
+      {railMode !== "kube" && (
+        <Splitter
+          onDelta={(d) => setResponseWidth(clampWidth(responseWidth - d, 240, 1200))}
+        />
+      )}
 
+      {railMode !== "kube" && (
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
-        {railMode === "kube" && (
-          <div className="empty">Kubeconfigs mode — response inspector hidden.</div>
-        )}
-        {railMode !== "kube" && error && <div className="error">{error}</div>}
-        {railMode !== "kube" && !error && !currentResponse && (
+        {error && <div className="error">{error}</div>}
+        {!error && !currentResponse && (
           <div className="empty">
             {isRequest ? "Hit Send to fire the request." : "Open a request to send it."}
           </div>
         )}
-        {railMode !== "kube" && currentResponse && (
+        {currentResponse && (
           <ResponseView
             response={currentResponse}
             history={currentRuns}
@@ -1097,6 +1100,7 @@ export function App() {
           />
         )}
       </div>
+      )}
 
       {activeTool && (
         <>
