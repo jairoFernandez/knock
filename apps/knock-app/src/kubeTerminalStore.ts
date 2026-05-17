@@ -241,6 +241,47 @@ class Store {
     (entry as TerminalEntry & { initialPassphrase?: string | null }).initialPassphrase =
       args.passphrase;
 
+    // Click-to-position-cursor on the current prompt line.
+    // Translates a single-click into N ← / → arrow keys sent through the PTY.
+    // Only the line containing the shell cursor is editable; older rows are ignored.
+    let clickStart: { x: number; y: number } | null = null;
+    container.addEventListener("mousedown", (ev) => {
+      if (ev.button !== 0) return;
+      clickStart = { x: ev.clientX, y: ev.clientY };
+    });
+    container.addEventListener("mouseup", (ev) => {
+      if (ev.button !== 0) return;
+      const start = clickStart;
+      clickStart = null;
+      if (!start) return;
+      // Ignore drags (user is selecting text)
+      const dx = Math.abs(ev.clientX - start.x);
+      const dy = Math.abs(ev.clientY - start.y);
+      if (dx > 3 || dy > 3) return;
+      // Ignore if user has an active selection
+      const sel = term.getSelection();
+      if (sel && sel.length > 0) return;
+
+      const screen = container.querySelector(".xterm-screen") as HTMLElement | null;
+      const target = screen ?? container;
+      const rect = target.getBoundingClientRect();
+      const cellW = rect.width / Math.max(1, term.cols);
+      const cellH = rect.height / Math.max(1, term.rows);
+      const col = Math.floor((ev.clientX - rect.left) / cellW);
+      const row = Math.floor((ev.clientY - rect.top) / cellH);
+      if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return;
+      const buf = term.buffer.active;
+      const curRow = buf.cursorY;
+      if (row !== curRow) return;
+      const delta = col - buf.cursorX;
+      if (delta === 0) return;
+      const seq = delta > 0 ? "\x1b[C".repeat(delta) : "\x1b[D".repeat(-delta);
+      const sid = entry.sessionId;
+      if (sid) {
+        invoke("terminal_write", { sessionId: sid, data: seq }).catch(() => undefined);
+      }
+    });
+
     this.terminals.set(id, entry);
     return entry;
   }
