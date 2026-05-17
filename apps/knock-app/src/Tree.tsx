@@ -120,6 +120,7 @@ function kindIcon(kind: EntryKind | undefined): string {
     case "environment": return "▦";
     case "flow": return "⇉";
     case "config": return "⚙";
+    case "openapi": return "❖";
     default: return "·";
   }
 }

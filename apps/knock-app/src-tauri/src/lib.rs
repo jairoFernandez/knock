@@ -1,4 +1,5 @@
-mod commands;
+pub mod commands;
+mod openapi_cmd;
 mod recents;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,6 +52,13 @@ pub fn run() {
             commands::update_request_method,
             commands::update_request_name,
             commands::get_system_stats,
+            openapi_cmd::openapi_fetch,
+            openapi_cmd::openapi_preview_import,
+            openapi_cmd::openapi_apply_import,
+            openapi_cmd::openapi_get_meta,
+            openapi_cmd::openapi_read_spec,
+            openapi_cmd::openapi_save_spec,
+            openapi_cmd::openapi_list_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

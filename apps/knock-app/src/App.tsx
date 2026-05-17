@@ -20,6 +20,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ColorPicker } from "./ColorPicker";
 import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
 import { Statusbar, SCALE_STEP, clampScale } from "./Statusbar";
+import { OpenApiImportModal } from "./OpenApiImportModal";
+import { OpenApiView } from "./OpenApiView";
 import type { DirEntryDto, RecentEntry } from "./types";
 import type {
   KV,
@@ -329,10 +331,18 @@ export function App() {
   }
 
   const isRequest = selected?.startsWith("requests/") ?? false;
+  const isOpenApi =
+    selected === "openapi/spec.json" || selected === "openapi/spec.yaml";
+  const [showOpenApiImport, setShowOpenApiImport] = useState(false);
 
   useEffect(() => {
     if (!workspace || !selected) return;
     setError(null);
+    if (isOpenApi) {
+      setForm(null);
+      setRawContent("");
+      return;
+    }
     if (isRequest) {
       invoke<RequestForm>("parse_request_form", { root: workspace.root, rel: selected })
         .then(setForm)
@@ -361,7 +371,7 @@ export function App() {
         .catch((e) => setError(String(e)));
       setForm(null);
     }
-  }, [workspace, selected, isRequest]);
+  }, [workspace, selected, isRequest, isOpenApi]);
 
   async function saveRaw() {
     if (!workspace || !selected) return;
@@ -728,13 +738,22 @@ export function App() {
           <>
             <div className="panel-header sidebar-header">
               <span>Workspace</span>
-              <button
-                className="sidebar-add"
-                title="New request / fragment / flow / environment"
-                onClick={() => setShowNewEntry("request")}
-              >
-                +
-              </button>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  className="sidebar-add"
+                  title="Import OpenAPI spec"
+                  onClick={() => setShowOpenApiImport(true)}
+                >
+                  ❖
+                </button>
+                <button
+                  className="sidebar-add"
+                  title="New request / fragment / flow / environment"
+                  onClick={() => setShowNewEntry("request")}
+                >
+                  +
+                </button>
+              </div>
             </div>
             {workspace && (
               <Tree
@@ -989,7 +1008,16 @@ export function App() {
             onSend={runRequest}
           />
         )}
-        {selected && !isRequest && (
+        {selected && isOpenApi && workspace && (
+          <OpenApiView
+            root={workspace.root}
+            rel={selected}
+            onSelectRequest={(rel) => setSelected(rel)}
+            onTreeChanged={(tree) => setEntries(tree)}
+            onReimport={() => setShowOpenApiImport(true)}
+          />
+        )}
+        {selected && !isRequest && !isOpenApi && (
           <>
             <div className="panel-header raw-header">
               <span>{selected}{rawDirty && <span className="dirty-mark"> •</span>}</span>
@@ -1154,6 +1182,21 @@ export function App() {
           onSaved={(next) => {
             setShowAppearance(false);
             setWorkspace({ ...workspace, color: next.color, icon: next.icon });
+          }}
+        />
+      )}
+
+      {showOpenApiImport && workspace && (
+        <OpenApiImportModal
+          root={workspace.root}
+          onCancel={() => setShowOpenApiImport(false)}
+          onDone={async (tree) => {
+            setShowOpenApiImport(false);
+            setEntries(tree);
+            await refreshTree(workspace.root);
+            setSelected(
+              tree.find((t) => t.kind === "openapi")?.rel ?? null,
+            );
           }}
         />
       )}

@@ -14,3 +14,5 @@ thiserror = { workspace = true }
 regex = { workspace = true }
 indexmap = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }

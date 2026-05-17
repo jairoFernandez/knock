@@ -30,6 +30,16 @@ pub struct Request {
     #[serde(default)]
     pub query: IndexMap<String, String>,
     pub body: Option<BodySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openapi: Option<OpenApiMark>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct OpenApiMark {
+    pub operation_id: String,
+    pub path: String,
+    pub spec_version: String,
+    pub generated_hash: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

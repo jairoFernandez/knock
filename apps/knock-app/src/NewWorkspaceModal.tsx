@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { WorkspaceInfo } from "./types";
+import type {
+  OpenApiPreview,
+  OpenApiSource,
+  TreeEntry,
+  WorkspaceInfo,
+} from "./types";
 
 interface Props {
   onCreated: (info: WorkspaceInfo) => void;
@@ -12,30 +17,86 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
   const [parent, setParent] = useState<string>("");
   const [name, setName] = useState<string>("");
   const [git, setGit] = useState<boolean>(true);
+  const [openapiUrl, setOpenapiUrl] = useState<string>("");
+  const [openapiFile, setOpenapiFile] = useState<string>("");
+  const [openapiTab, setOpenapiTab] = useState<"none" | "url" | "file">("none");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
 
   async function pickParent() {
     const picked = await open({ directory: true, multiple: false });
     if (picked && typeof picked === "string") setParent(picked);
   }
 
+  async function pickFile() {
+    const picked = await open({
+      multiple: false,
+      filters: [
+        { name: "OpenAPI", extensions: ["json", "yaml", "yml"] },
+        { name: "All", extensions: ["*"] },
+      ],
+    });
+    if (picked && typeof picked === "string") setOpenapiFile(picked);
+  }
+
   async function create() {
     setError(null);
     if (!parent) return setError("Choose a parent directory.");
     if (!name.trim()) return setError("Enter a workspace name.");
+    const source: OpenApiSource | null =
+      openapiTab === "url" && openapiUrl.trim()
+        ? { kind: "url", value: openapiUrl.trim() }
+        : openapiTab === "file" && openapiFile
+          ? { kind: "file", value: openapiFile }
+          : null;
+
     setBusy(true);
     try {
+      setProgress("Creating workspace…");
       const info = await invoke<WorkspaceInfo>("init_workspace", {
         parent,
         name: name.trim(),
         git,
       });
+
+      if (source) {
+        try {
+          setProgress("Fetching OpenAPI spec…");
+          const bytes = await invoke<number[]>("openapi_fetch", { source });
+          setProgress("Parsing operations…");
+          const preview = await invoke<OpenApiPreview>(
+            "openapi_preview_import",
+            {
+              root: info.root,
+              bytes,
+              sourceUrl: source.kind === "url" ? source.value : null,
+            },
+          );
+          const selections = preview.operations.map((op) => ({
+            operationId: op.operationId,
+            action: "create",
+          }));
+          setProgress(`Importing ${selections.length} operations…`);
+          await invoke<TreeEntry[]>("openapi_apply_import", {
+            root: info.root,
+            bytes,
+            source,
+            selections,
+          });
+        } catch (e) {
+          setError(`Workspace created but OpenAPI import failed: ${e}`);
+          onCreated(info);
+          return;
+        }
+      }
+
       onCreated(info);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -64,7 +125,7 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
             placeholder="my-api"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter") create();
+              if (e.key === "Enter" && openapiTab === "none") create();
             }}
           />
         </label>
@@ -76,6 +137,60 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
           />
           Initialize a git repo
         </label>
+
+        <div style={{ marginTop: 8, borderTop: "1px solid #2a2a2a", paddingTop: 8 }}>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6 }}>
+            Bootstrap from OpenAPI (optional)
+          </div>
+          <div className="row" style={{ gap: 4, marginBottom: 6 }}>
+            <button
+              className={openapiTab === "none" ? "primary" : ""}
+              onClick={() => setOpenapiTab("none")}
+              type="button"
+            >
+              None
+            </button>
+            <button
+              className={openapiTab === "url" ? "primary" : ""}
+              onClick={() => setOpenapiTab("url")}
+              type="button"
+            >
+              From URL
+            </button>
+            <button
+              className={openapiTab === "file" ? "primary" : ""}
+              onClick={() => setOpenapiTab("file")}
+              type="button"
+            >
+              From file
+            </button>
+          </div>
+          {openapiTab === "url" && (
+            <input
+              type="text"
+              value={openapiUrl}
+              onChange={(e) => setOpenapiUrl(e.target.value)}
+              placeholder="https://petstore3.swagger.io/api/v3/openapi.json"
+            />
+          )}
+          {openapiTab === "file" && (
+            <div className="row">
+              <input
+                type="text"
+                value={openapiFile}
+                onChange={(e) => setOpenapiFile(e.target.value)}
+                placeholder="/path/to/openapi.json"
+              />
+              <button onClick={pickFile} type="button">
+                Browse…
+              </button>
+            </div>
+          )}
+        </div>
+
+        {progress && (
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>{progress}</div>
+        )}
         {error && <div className="error">{error}</div>}
         <div className="row right">
           <button onClick={onCancel} disabled={busy}>

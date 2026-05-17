@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use knock_core::{execute, init_at, parser, resolve, Workspace};
+use knock_core::{execute, init_at, parser, resolve, OpenApiMark, Workspace};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -55,6 +55,39 @@ pub struct RequestFormDto {
     pub headers: Vec<KvDto>,
     pub query: Vec<KvDto>,
     pub body: BodyDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openapi: Option<OpenApiMarkDto>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenApiMarkDto {
+    pub operation_id: String,
+    pub path: String,
+    pub spec_version: String,
+    pub generated_hash: String,
+}
+
+impl From<OpenApiMark> for OpenApiMarkDto {
+    fn from(m: OpenApiMark) -> Self {
+        Self {
+            operation_id: m.operation_id,
+            path: m.path,
+            spec_version: m.spec_version,
+            generated_hash: m.generated_hash,
+        }
+    }
+}
+
+impl From<OpenApiMarkDto> for OpenApiMark {
+    fn from(m: OpenApiMarkDto) -> Self {
+        Self {
+            operation_id: m.operation_id,
+            path: m.path,
+            spec_version: m.spec_version,
+            generated_hash: m.generated_hash,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -972,6 +1005,8 @@ pub fn list_tree(root: String) -> Result<Vec<TreeEntry>, String> {
 fn classify(rel: &str) -> &'static str {
     if rel == "knock.toml" {
         "config"
+    } else if rel == "openapi/spec.json" || rel == "openapi/spec.yaml" {
+        "openapi"
     } else if rel.starts_with("requests/") {
         "request"
     } else if rel.starts_with("fragments/") {
@@ -1026,9 +1061,15 @@ fn walk(base: &Path, dir: &Path, files: &mut Vec<String>) -> std::io::Result<()>
                 continue;
             }
             walk(base, &path, files)?;
-        } else if path.is_file() && name_str.ends_with(".toml") {
-            if let Ok(rel) = path.strip_prefix(base) {
-                files.push(rel.to_string_lossy().replace('\\', "/"));
+        } else if path.is_file() {
+            let is_spec = matches!(
+                name_str.as_str(),
+                "spec.json" | "spec.yaml"
+            ) && dir.file_name().and_then(|n| n.to_str()) == Some("openapi");
+            if name_str.ends_with(".toml") || is_spec {
+                if let Ok(rel) = path.strip_prefix(base) {
+                    files.push(rel.to_string_lossy().replace('\\', "/"));
+                }
             }
         }
     }
@@ -1107,6 +1148,7 @@ fn request_to_form(r: knock_core::Request) -> RequestFormDto {
             .map(|(key, value)| KvDto { key, value })
             .collect(),
         body,
+        openapi: r.openapi.map(Into::into),
     }
 }
 
@@ -1123,6 +1165,14 @@ struct TomlBody<'a> {
 }
 
 #[derive(Serialize)]
+struct TomlOpenApi<'a> {
+    operation_id: &'a str,
+    path: &'a str,
+    spec_version: &'a str,
+    generated_hash: &'a str,
+}
+
+#[derive(Serialize)]
 struct TomlRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<&'a str>,
@@ -1136,6 +1186,12 @@ struct TomlRequest<'a> {
     headers: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     body: Option<TomlBody<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    openapi: Option<TomlOpenApi<'a>>,
+}
+
+pub fn emit_request_toml_pub(form: &RequestFormDto) -> Result<String, String> {
+    emit_request_toml(form)
 }
 
 fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
@@ -1192,6 +1248,13 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         }
     };
 
+    let openapi = form.openapi.as_ref().map(|m| TomlOpenApi {
+        operation_id: m.operation_id.as_str(),
+        path: m.path.as_str(),
+        spec_version: m.spec_version.as_str(),
+        generated_hash: m.generated_hash.as_str(),
+    });
+
     let req = TomlRequest {
         name: form.name.as_deref().filter(|s| !s.is_empty()),
         method: &form.method,
@@ -1200,6 +1263,7 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         query,
         headers,
         body,
+        openapi,
     };
 
     toml::to_string_pretty(&req).map_err(to_err)

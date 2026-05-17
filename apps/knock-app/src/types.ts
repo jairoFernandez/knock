@@ -12,6 +12,7 @@ export type EntryKind =
   | "environment"
   | "flow"
   | "config"
+  | "openapi"
   | "other";
 
 export interface TreeEntry {
@@ -46,6 +47,13 @@ export type BodyForm =
   | { kind: "form"; form: KV[] }
   | { kind: "file"; path: string };
 
+export interface OpenApiMark {
+  operationId: string;
+  path: string;
+  specVersion: string;
+  generatedHash: string;
+}
+
 export interface RequestForm {
   name: string | null;
   method: string;
@@ -54,6 +62,50 @@ export interface RequestForm {
   headers: KV[];
   query: KV[];
   body: BodyForm;
+  openapi?: OpenApiMark | null;
+}
+
+export interface OpenApiMeta {
+  hasSpec: boolean;
+  specRel: string | null;
+  specFormat: string | null;
+  specVersion: string | null;
+  lastImportedAt: number | null;
+  sourceUrl: string | null;
+  operationCount: number;
+}
+
+export type OpenApiOpStatus = "new" | "modified" | "unchanged" | "removed";
+
+export interface OpenApiOperationPreview {
+  operationId: string;
+  method: string;
+  path: string;
+  tag: string | null;
+  summary: string | null;
+  targetRel: string;
+  status: OpenApiOpStatus;
+  existingWasManuallyEdited: boolean;
+}
+
+export interface OpenApiPreview {
+  specVersion: string;
+  specFormat: string;
+  title: string | null;
+  sourceUrl: string | null;
+  operations: OpenApiOperationPreview[];
+  specText: string;
+  specExt: string;
+}
+
+export interface OpenApiSource {
+  kind: "url" | "file";
+  value: string;
+}
+
+export interface OpenApiHistoryEntry {
+  rel: string;
+  name: string;
 }
 
 export interface RecentEntry {

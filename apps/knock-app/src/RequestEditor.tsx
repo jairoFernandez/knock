@@ -56,6 +56,21 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
 
   return (
     <div className="request-editor">
+      {form.openapi && (
+        <div
+          style={{
+            padding: "4px 10px",
+            fontSize: 11,
+            background: "rgba(99, 102, 241, 0.12)",
+            color: "#a5b4fc",
+            borderBottom: "1px solid #2a2a2a",
+          }}
+          title={`OpenAPI ${form.openapi.path}`}
+        >
+          ❖ Generated from OpenAPI v{form.openapi.specVersion} ·{" "}
+          <code>{form.openapi.operationId}</code>
+        </div>
+      )}
       <div className="urlbar">
         <select
           className={`method-select ${methodClass(form.method)}`}
