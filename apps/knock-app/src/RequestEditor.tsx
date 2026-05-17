@@ -3,7 +3,7 @@ import { TemplatedInput } from "./TemplatedInput";
 import { KVTable } from "./KVTable";
 import { BodyTab } from "./BodyTab";
 import { hasUnresolvedVars, interpolate } from "./interpolate";
-import type { RequestForm } from "./types";
+import type { KV, OpenApiParamSpec, RequestForm } from "./types";
 
 interface Props {
   form: RequestForm;
@@ -15,7 +15,7 @@ interface Props {
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-type Tab = "params" | "path" | "body" | "headers" | "use" | "responses";
+type Tab = "params" | "path" | "body" | "headers" | "use" | "responses" | "curl";
 
 function methodClass(method: string): string {
   const m = method.toUpperCase();
@@ -69,23 +69,14 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
     [form.url, form.query, effectiveVars],
   );
 
+  const paramSpecs = form.openapi?.paramSpecs ?? [];
+  const querySpecs = paramSpecs.filter((p) => p.location === "query");
+  const pathSpecs = paramSpecs.filter((p) => p.location === "path");
+  const headerSpecs = paramSpecs.filter((p) => p.location === "header");
+
   return (
     <div className="request-editor">
-      {form.openapi && (
-        <div
-          style={{
-            padding: "4px 10px",
-            fontSize: 11,
-            background: "rgba(99, 102, 241, 0.12)",
-            color: "#a5b4fc",
-            borderBottom: "1px solid #2a2a2a",
-          }}
-          title={`OpenAPI ${form.openapi.path}`}
-        >
-          ❖ Generated from OpenAPI v{form.openapi.specVersion} ·{" "}
-          <code>{form.openapi.operationId}</code>
-        </div>
-      )}
+      {form.openapi && <OpInfoBlock mark={form.openapi} />}
       <div className="urlbar">
         <select
           className={`method-select ${methodClass(form.method)}`}
@@ -156,24 +147,50 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
             Responses <span className="badge">{responseEntries.length}</span>
           </button>
         )}
+        <button
+          className={tab === "curl" ? "tab active" : "tab"}
+          onClick={() => setTab("curl")}
+        >
+          cURL
+        </button>
       </div>
 
       <div className="tab-body">
         {tab === "params" && (
-          <KVTable
-            rows={form.query}
-            vars={effectiveVars}
-            keyPlaceholder="parameter"
-            onChange={(query) => onChange({ ...form, query })}
-          />
+          querySpecs.length > 0 ? (
+            <ParamList
+              rows={form.query}
+              specs={querySpecs}
+              vars={effectiveVars}
+              keyPlaceholder="parameter"
+              onChange={(query) => onChange({ ...form, query })}
+            />
+          ) : (
+            <KVTable
+              rows={form.query}
+              vars={effectiveVars}
+              keyPlaceholder="parameter"
+              onChange={(query) => onChange({ ...form, query })}
+            />
+          )
         )}
         {tab === "path" && (
-          <KVTable
-            rows={pathParams}
-            vars={effectiveVars}
-            keyPlaceholder="path variable"
-            onChange={(next) => onChange({ ...form, path: next })}
-          />
+          pathSpecs.length > 0 ? (
+            <ParamList
+              rows={pathParams}
+              specs={pathSpecs}
+              vars={effectiveVars}
+              keyPlaceholder="path variable"
+              onChange={(next) => onChange({ ...form, path: next })}
+            />
+          ) : (
+            <KVTable
+              rows={pathParams}
+              vars={effectiveVars}
+              keyPlaceholder="path variable"
+              onChange={(next) => onChange({ ...form, path: next })}
+            />
+          )
         )}
         {tab === "body" && (
           <BodyTab
@@ -183,12 +200,22 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
           />
         )}
         {tab === "headers" && (
-          <KVTable
-            rows={form.headers}
-            vars={effectiveVars}
-            keyPlaceholder="header"
-            onChange={(headers) => onChange({ ...form, headers })}
-          />
+          headerSpecs.length > 0 ? (
+            <ParamList
+              rows={form.headers}
+              specs={headerSpecs}
+              vars={effectiveVars}
+              keyPlaceholder="header"
+              onChange={(headers) => onChange({ ...form, headers })}
+            />
+          ) : (
+            <KVTable
+              rows={form.headers}
+              vars={effectiveVars}
+              keyPlaceholder="header"
+              onChange={(headers) => onChange({ ...form, headers })}
+            />
+          )
         )}
         {tab === "use" && (
           <UseList
@@ -197,7 +224,166 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
           />
         )}
         {tab === "responses" && <ResponsesPanel entries={responseEntries} />}
+        {tab === "curl" && (
+          <CurlTab form={form} vars={effectiveVars} />
+        )}
       </div>
+    </div>
+  );
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildCurl(
+  form: RequestForm,
+  vars: Record<string, string>,
+  interpolated: boolean,
+): string {
+  const apply = (s: string): string =>
+    interpolated ? interpolate(s, vars) : s;
+
+  const url = apply(form.url);
+  const params = (form.query ?? []).filter((q) => q.key.trim() !== "");
+  let fullUrl = url;
+  if (params.length > 0) {
+    const qs = params
+      .map(
+        (q) =>
+          `${encodeURIComponent(apply(q.key))}=${encodeURIComponent(apply(q.value))}`,
+      )
+      .join("&");
+    fullUrl += fullUrl.includes("?") ? `&${qs}` : `?${qs}`;
+  }
+
+  const parts: string[] = [`curl -X ${form.method.toUpperCase()} ${shellQuote(fullUrl)}`];
+  for (const h of form.headers ?? []) {
+    if (!h.key.trim()) continue;
+    parts.push(`-H ${shellQuote(`${apply(h.key)}: ${apply(h.value)}`)}`);
+  }
+
+  const body = form.body;
+  switch (body.kind) {
+    case "json": {
+      const text = apply(body.json);
+      parts.push(`-H ${shellQuote("Content-Type: application/json")}`);
+      parts.push(`--data ${shellQuote(text)}`);
+      break;
+    }
+    case "text": {
+      parts.push(`--data ${shellQuote(apply(body.text))}`);
+      break;
+    }
+    case "form": {
+      for (const kv of body.form) {
+        if (!kv.key.trim()) continue;
+        parts.push(`--data-urlencode ${shellQuote(`${apply(kv.key)}=${apply(kv.value)}`)}`);
+      }
+      break;
+    }
+    case "file": {
+      parts.push(`--data-binary ${shellQuote(`@${apply(body.path)}`)}`);
+      break;
+    }
+    case "none":
+    default:
+      break;
+  }
+
+  return parts.join(" \\\n  ");
+}
+
+function CurlTab({
+  form,
+  vars,
+}: {
+  form: RequestForm;
+  vars: Record<string, string>;
+}) {
+  const [interpolated, setInterpolated] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const curl = useMemo(
+    () => buildCurl(form, vars, interpolated),
+    [form, vars, interpolated],
+  );
+
+  const unresolved = useMemo(
+    () => interpolated && /\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}/.test(curl),
+    [curl, interpolated],
+  );
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(curl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard blocked */
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 8, gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 4 }}>
+          <button
+            onClick={() => setInterpolated(true)}
+            style={{
+              padding: "4px 10px",
+              background: interpolated ? "var(--accent, #6366f1)" : "transparent",
+              color: interpolated ? "#fff" : "var(--text-dim)",
+              border: 0,
+              borderRadius: "3px 0 0 3px",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+          >
+            Interpolated
+          </button>
+          <button
+            onClick={() => setInterpolated(false)}
+            style={{
+              padding: "4px 10px",
+              background: !interpolated ? "var(--accent, #6366f1)" : "transparent",
+              color: !interpolated ? "#fff" : "var(--text-dim)",
+              border: 0,
+              borderRadius: "0 3px 3px 0",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+          >
+            Templated
+          </button>
+        </div>
+        {unresolved && (
+          <span style={{ color: "#eab308", fontSize: 11 }}>
+            ⚠ contains unresolved {`{{vars}}`}
+          </span>
+        )}
+        <button onClick={copy} style={{ marginLeft: "auto" }}>
+          {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          padding: 12,
+          background: "var(--panel-2, #1a1a1a)",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          fontFamily: "var(--mono)",
+          fontSize: 12.5,
+          lineHeight: 1.5,
+          whiteSpace: "pre",
+        }}
+      >
+        {curl}
+      </pre>
     </div>
   );
 }
@@ -297,6 +483,307 @@ function UseList({ uses, onChange }: UseListProps) {
       <button className="kv-add" onClick={() => onChange([...uses, ""])}>
         + Add fragment
       </button>
+    </div>
+  );
+}
+
+function OpInfoBlock({ mark }: { mark: NonNullable<RequestForm["openapi"]> }) {
+  const [open, setOpen] = useState(false);
+  const hasDetails =
+    !!(mark.description || mark.deprecated || (mark.security && mark.security.length > 0));
+  return (
+    <div
+      style={{
+        padding: "4px 10px",
+        fontSize: 11,
+        background: "rgba(99, 102, 241, 0.12)",
+        color: "#a5b4fc",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          cursor: hasDetails ? "pointer" : "default",
+        }}
+        onClick={() => hasDetails && setOpen((v) => !v)}
+        title={hasDetails ? "Toggle details" : `OpenAPI ${mark.path}`}
+      >
+        <span>❖</span>
+        <span>
+          Generated from OpenAPI v{mark.specVersion} ·{" "}
+          <code style={{ color: "inherit" }}>{mark.operationId}</code>
+        </span>
+        {mark.deprecated && (
+          <span
+            style={{
+              background: "#7f1d1d",
+              color: "#fecaca",
+              padding: "1px 6px",
+              borderRadius: 3,
+              fontSize: 10,
+              fontWeight: 600,
+            }}
+          >
+            DEPRECATED
+          </span>
+        )}
+        {mark.security && mark.security.length > 0 && (
+          <span style={{ opacity: 0.7 }}>🔒 {mark.security.join(", ")}</span>
+        )}
+        {hasDetails && (
+          <span style={{ marginLeft: "auto", opacity: 0.6 }}>{open ? "▾" : "▸"}</span>
+        )}
+      </div>
+      {open && mark.description && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 4px 4px",
+            color: "var(--text-dim)",
+            fontSize: 12,
+            whiteSpace: "pre-wrap",
+            lineHeight: 1.5,
+          }}
+        >
+          {mark.description}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ParamListProps {
+  rows: KV[];
+  specs: OpenApiParamSpec[];
+  vars: Record<string, string>;
+  keyPlaceholder: string;
+  onChange: (rows: KV[]) => void;
+}
+
+function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListProps) {
+  const byName = useMemo(() => {
+    const m = new Map<string, OpenApiParamSpec>();
+    for (const s of specs) m.set(s.name, s);
+    return m;
+  }, [specs]);
+
+  const rowsByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows) if (r.key) m.set(r.key, r.value);
+    return m;
+  }, [rows]);
+
+  const specNames = specs.map((s) => s.name);
+  const extras = rows.filter((r) => !byName.has(r.key));
+
+  function setValue(name: string, value: string) {
+    const idx = rows.findIndex((r) => r.key === name);
+    const next = [...rows];
+    if (idx >= 0) {
+      next[idx] = { key: name, value };
+    } else {
+      next.push({ key: name, value });
+    }
+    onChange(next);
+  }
+
+  function setExtra(target: KV, kv: KV) {
+    onChange(rows.map((r) => (r === target ? kv : r)));
+  }
+
+  function addExtra() {
+    onChange([...rows, { key: "", value: "" }]);
+  }
+
+  function removeExtra(target: KV) {
+    onChange(rows.filter((r) => r !== target));
+  }
+
+  return (
+    <div style={{ padding: 4, display: "flex", flexDirection: "column" }}>
+      {specNames.map((name) => {
+        const spec = byName.get(name)!;
+        const value = rowsByName.get(name) ?? spec.default ?? spec.example ?? "";
+        const unresolved = hasUnresolvedVars(value, vars);
+        const hasEnum = (spec.enumValues?.length ?? 0) > 0;
+        const constraintsBits: string[] = [];
+        if (spec.min != null) constraintsBits.push(`min ${spec.min}`);
+        if (spec.max != null) constraintsBits.push(`max ${spec.max}`);
+        if (spec.minLength != null) constraintsBits.push(`minLen ${spec.minLength}`);
+        if (spec.maxLength != null) constraintsBits.push(`maxLen ${spec.maxLength}`);
+        if (spec.pattern) constraintsBits.push(`pattern ${spec.pattern}`);
+        const numericValid = (() => {
+          if (spec.ty !== "integer" && spec.ty !== "number") return true;
+          if (!value) return true;
+          const n = Number(value);
+          if (Number.isNaN(n)) return false;
+          if (spec.min != null && n < spec.min) return false;
+          if (spec.max != null && n > spec.max) return false;
+          return true;
+        })();
+        const lengthValid = (() => {
+          if (!value) return true;
+          if (spec.minLength != null && value.length < spec.minLength) return false;
+          if (spec.maxLength != null && value.length > spec.maxLength) return false;
+          return true;
+        })();
+        const patternValid = (() => {
+          if (!value || !spec.pattern) return true;
+          try {
+            return new RegExp(spec.pattern).test(value);
+          } catch {
+            return true;
+          }
+        })();
+        const invalid = !numericValid || !lengthValid || !patternValid;
+        return (
+          <div
+            key={name}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "200px 1fr",
+              gap: 12,
+              padding: "8px 8px",
+              borderBottom: "1px solid var(--border)",
+              alignItems: "start",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textDecoration: spec.deprecated ? "line-through" : "none",
+                  color: spec.deprecated ? "var(--text-dim)" : "var(--text)",
+                }}
+              >
+                {spec.name}
+                {spec.required && (
+                  <span style={{ color: "#ef4444", marginLeft: 2 }} title="required">
+                    *
+                  </span>
+                )}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-dim)",
+                  display: "flex",
+                  gap: 4,
+                  flexWrap: "wrap",
+                }}
+              >
+                {spec.ty && (
+                  <span
+                    style={{
+                      padding: "1px 4px",
+                      background: "var(--panel-2, #1a1a1a)",
+                      borderRadius: 2,
+                    }}
+                  >
+                    {spec.ty}
+                    {spec.format ? `:${spec.format}` : ""}
+                  </span>
+                )}
+                <span style={{ opacity: 0.6 }}>({spec.location})</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {hasEnum ? (
+                <select
+                  value={value}
+                  onChange={(e) => setValue(name, e.target.value)}
+                  style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+                >
+                  <option value="">(unset)</option>
+                  {spec.enumValues!.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={value}
+                  placeholder={spec.example ?? spec.default ?? ""}
+                  onChange={(e) => setValue(name, e.target.value)}
+                  spellCheck={false}
+                  style={{
+                    fontFamily: "var(--mono)",
+                    fontSize: 12,
+                    borderColor: invalid ? "#ef4444" : undefined,
+                  }}
+                />
+              )}
+              {spec.description && (
+                <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>
+                  {spec.description}
+                </div>
+              )}
+              {constraintsBits.length > 0 && (
+                <div style={{ fontSize: 10, color: invalid ? "#ef4444" : "var(--text-dim)" }}>
+                  {constraintsBits.join(" · ")}
+                </div>
+              )}
+              {unresolved && (
+                <div style={{ fontSize: 10, color: "#eab308" }}>
+                  ⚠ unresolved {`{{var}}`}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {extras.length > 0 && (
+        <div
+          style={{
+            padding: "6px 8px",
+            fontSize: 11,
+            color: "var(--text-dim)",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          Extra (not in spec)
+        </div>
+      )}
+      {extras.map((kv, i) => (
+        <div
+          key={`extra-${i}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "200px 1fr 24px",
+            gap: 12,
+            padding: "6px 8px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <input
+            type="text"
+            value={kv.key}
+            placeholder={keyPlaceholder}
+            onChange={(e) => setExtra(kv, { ...kv, key: e.target.value })}
+            spellCheck={false}
+            style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+          />
+          <input
+            type="text"
+            value={kv.value}
+            onChange={(e) => setExtra(kv, { ...kv, value: e.target.value })}
+            spellCheck={false}
+            style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+          />
+          <button onClick={() => removeExtra(kv)}>×</button>
+        </div>
+      ))}
+      <div style={{ padding: 6 }}>
+        <button onClick={addExtra}>+ Add custom</button>
+      </div>
     </div>
   );
 }

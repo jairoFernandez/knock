@@ -40,4 +40,48 @@ fn petstore3_parses_with_refs_and_responses() {
         .get("200")
         .expect("getPetById has 200");
     assert!(r200.example.is_some(), "200 example resolved from schema");
+
+    // Metadata: findPetsByStatus has status param with enum
+    let by_status = spec
+        .operations
+        .iter()
+        .find(|op| op.operation_id == "findPetsByStatus")
+        .expect("findPetsByStatus exists");
+    let status_spec = by_status
+        .params
+        .iter()
+        .find(|p| p.name == "status")
+        .expect("status param has spec");
+    assert_eq!(status_spec.location, "query");
+    assert_eq!(status_spec.ty.as_deref(), Some("string"));
+    assert!(
+        status_spec.enum_values.contains(&"available".to_string()),
+        "enum contains 'available'"
+    );
+    assert!(
+        status_spec.enum_values.contains(&"pending".to_string()),
+        "enum contains 'pending'"
+    );
+
+    // getPetById petId is required path param
+    let petid_spec = get_by_id
+        .params
+        .iter()
+        .find(|p| p.name == "petId")
+        .expect("petId spec");
+    assert!(petid_spec.required, "petId required");
+    assert_eq!(petid_spec.location, "path");
+    assert_eq!(petid_spec.ty.as_deref(), Some("integer"));
+
+    // addPet body required + body example present
+    let add_pet_op = spec
+        .operations
+        .iter()
+        .find(|op| op.operation_id == "addPet")
+        .unwrap();
+    assert!(add_pet_op.body_required, "addPet requestBody required");
+
+    // Op description on at least one op
+    let any_desc = spec.operations.iter().any(|op| op.description.is_some());
+    assert!(any_desc, "at least one op has description");
 }

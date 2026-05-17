@@ -53,11 +53,35 @@ export interface OpenApiResponseInfo {
   example?: string | null;
 }
 
+export interface OpenApiParamSpec {
+  name: string;
+  location: string; // "path" | "query" | "header"
+  required?: boolean;
+  deprecated?: boolean;
+  description?: string | null;
+  ty?: string | null;
+  format?: string | null;
+  enumValues?: string[];
+  default?: string | null;
+  example?: string | null;
+  min?: number | null;
+  max?: number | null;
+  minLength?: number | null;
+  maxLength?: number | null;
+  pattern?: string | null;
+}
+
 export interface OpenApiMark {
   operationId: string;
   path: string;
   specVersion: string;
   generatedHash: string;
+  description?: string | null;
+  deprecated?: boolean;
+  security?: string[];
+  bodyDescription?: string | null;
+  bodyRequired?: boolean;
+  paramSpecs?: OpenApiParamSpec[];
   responses?: Record<string, OpenApiResponseInfo>;
 }
 

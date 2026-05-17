@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::commands::{
-    emit_request_toml_pub, BodyDto, KvDto, OpenApiMarkDto, OpenApiResponseInfoDto, RequestFormDto,
-    TreeEntry,
+    emit_request_toml_pub, BodyDto, KvDto, OpenApiMarkDto, OpenApiParamSpecDto,
+    OpenApiResponseInfoDto, RequestFormDto, TreeEntry,
 };
 
 fn to_err<E: std::fmt::Display>(e: E) -> String {
@@ -290,11 +290,38 @@ pub fn openapi_apply_import(
                         )
                     })
                     .collect();
+                let param_specs: Vec<OpenApiParamSpecDto> = op
+                    .params
+                    .iter()
+                    .map(|p| OpenApiParamSpecDto {
+                        name: p.name.clone(),
+                        location: p.location.clone(),
+                        required: p.required,
+                        deprecated: p.deprecated,
+                        description: p.description.clone(),
+                        ty: p.ty.clone(),
+                        format: p.format.clone(),
+                        enum_values: p.enum_values.clone(),
+                        default: p.default.clone(),
+                        example: p.example.clone(),
+                        min: p.min,
+                        max: p.max,
+                        min_length: p.min_length,
+                        max_length: p.max_length,
+                        pattern: p.pattern.clone(),
+                    })
+                    .collect();
                 let mark = OpenApiMarkDto {
                     operation_id: op.operation_id.clone(),
                     path: op.path.clone(),
                     spec_version: spec.version.clone(),
                     generated_hash: hash.clone(),
+                    description: op.description.clone(),
+                    deprecated: op.deprecated,
+                    security: op.security.clone(),
+                    body_description: op.body_description.clone(),
+                    body_required: op.body_required,
+                    param_specs,
                     responses,
                 };
                 let mut marked_form = form.clone();

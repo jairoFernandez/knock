@@ -42,8 +42,52 @@ pub struct OpenApiMark {
     pub path: String,
     pub spec_version: String,
     pub generated_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub security: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_description: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub body_required: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_specs: Vec<OpenApiParamSpec>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub responses: IndexMap<String, OpenApiResponseInfo>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct OpenApiParamSpec {
+    pub name: String,
+    pub location: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ty: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enum_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

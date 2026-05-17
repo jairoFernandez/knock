@@ -44,11 +44,36 @@ pub struct Operation {
     pub path: String,
     pub tag: Option<String>,
     pub summary: Option<String>,
+    pub description: Option<String>,
+    pub deprecated: bool,
+    pub security: Vec<String>,
     pub path_params: IndexMap<String, String>,
     pub query_params: IndexMap<String, String>,
     pub header_params: IndexMap<String, String>,
+    pub params: Vec<ParamSpec>,
     pub body_json: Option<serde_json::Value>,
+    pub body_required: bool,
+    pub body_description: Option<String>,
     pub responses: IndexMap<String, ResponseSchema>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ParamSpec {
+    pub name: String,
+    pub location: String, // "path" | "query" | "header"
+    pub required: bool,
+    pub deprecated: bool,
+    pub description: Option<String>,
+    pub ty: Option<String>,
+    pub format: Option<String>,
+    pub enum_values: Vec<String>,
+    pub default: Option<String>,
+    pub example: Option<String>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub min_length: Option<u64>,
+    pub max_length: Option<u64>,
+    pub pattern: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -226,10 +251,29 @@ fn build_operation_oa3(
         .get("summary")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let description = op
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let deprecated = op
+        .get("deprecated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let security: Vec<String> = op
+        .get("security")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_object())
+                .flat_map(|o| o.keys().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut path_params = IndexMap::new();
     let mut query_params = IndexMap::new();
     let mut header_params = IndexMap::new();
+    let mut params: Vec<ParamSpec> = Vec::new();
     for raw in parameters {
         let p = resolver.deref(raw);
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -250,11 +294,21 @@ fn build_operation_oa3(
             }
             _ => {}
         }
+        if let Some(spec) = build_param_spec(resolver, p) {
+            params.push(spec);
+        }
     }
 
-    let body_json = op
-        .get("requestBody")
-        .map(|rb| resolver.deref(rb))
+    let request_body_node = op.get("requestBody").map(|rb| resolver.deref(rb));
+    let body_required = request_body_node
+        .and_then(|rb| rb.get("required"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let body_description = request_body_node
+        .and_then(|rb| rb.get("description"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let body_json = request_body_node
         .and_then(|rb| rb.get("content"))
         .and_then(|c| {
             c.get("application/json")
@@ -326,10 +380,16 @@ fn build_operation_oa3(
         path: path.to_string(),
         tag,
         summary,
+        description,
+        deprecated,
+        security,
         path_params,
         query_params,
         header_params,
+        params,
         body_json,
+        body_required,
+        body_description,
         responses,
     }
 }
@@ -423,11 +483,32 @@ fn build_operation_swagger2(
         .get("summary")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let description = op
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let deprecated = op
+        .get("deprecated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let security: Vec<String> = op
+        .get("security")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_object())
+                .flat_map(|o| o.keys().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut path_params = IndexMap::new();
     let mut query_params = IndexMap::new();
     let mut header_params = IndexMap::new();
+    let mut params: Vec<ParamSpec> = Vec::new();
     let mut body_json = None;
+    let mut body_required = false;
+    let mut body_description: Option<String> = None;
     for raw in parameters {
         let p = resolver.deref(raw);
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -449,8 +530,18 @@ fn build_operation_swagger2(
                 if let Some(schema) = p.get("schema") {
                     body_json = schema_to_example(resolver, schema, &mut HashSet::new());
                 }
+                body_required = p.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
+                body_description = p
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
             }
             _ => {}
+        }
+        if matches!(location, "path" | "query" | "header") {
+            if let Some(spec) = build_param_spec(resolver, p) {
+                params.push(spec);
+            }
         }
     }
 
@@ -482,12 +573,110 @@ fn build_operation_swagger2(
         path: path.to_string(),
         tag,
         summary,
+        description,
+        deprecated,
+        security,
         path_params,
         query_params,
         header_params,
+        params,
         body_json,
+        body_required,
+        body_description,
         responses,
     }
+}
+
+fn build_param_spec(resolver: &Resolver, p: &serde_json::Value) -> Option<ParamSpec> {
+    let name = p.get("name").and_then(|v| v.as_str())?.to_string();
+    let location = p.get("in").and_then(|v| v.as_str())?.to_string();
+    let required = p.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
+    let deprecated = p
+        .get("deprecated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let description = p
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // OpenAPI 3 uses schema; Swagger 2 inlines type/format/enum on the parameter.
+    let schema_opt = p.get("schema").map(|s| resolver.deref(s));
+
+    let (ty, format, enum_values, default, example, min, max, min_len, max_len, pattern) =
+        if let Some(schema) = schema_opt {
+            extract_schema_meta(schema)
+        } else {
+            extract_schema_meta(p)
+        };
+
+    Some(ParamSpec {
+        name,
+        location,
+        required,
+        deprecated,
+        description,
+        ty,
+        format,
+        enum_values,
+        default,
+        example: example.or_else(|| {
+            p.get("example").map(value_to_string)
+        }),
+        min,
+        max,
+        min_length: min_len,
+        max_length: max_len,
+        pattern,
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn extract_schema_meta(
+    schema: &serde_json::Value,
+) -> (
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+    Option<f64>,
+    Option<f64>,
+    Option<u64>,
+    Option<u64>,
+    Option<String>,
+) {
+    let ty = match schema.get("type") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .find(|s| *s != "null")
+            .map(String::from),
+        _ => None,
+    };
+    let format = schema
+        .get("format")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let enum_values: Vec<String> = schema
+        .get("enum")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().map(value_to_string).collect())
+        .unwrap_or_default();
+    let default = schema.get("default").map(value_to_string);
+    let example = schema.get("example").map(value_to_string);
+    let min = schema.get("minimum").and_then(|v| v.as_f64());
+    let max = schema.get("maximum").and_then(|v| v.as_f64());
+    let min_len = schema.get("minLength").and_then(|v| v.as_u64());
+    let max_len = schema.get("maxLength").and_then(|v| v.as_u64());
+    let pattern = schema
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    (
+        ty, format, enum_values, default, example, min, max, min_len, max_len, pattern,
+    )
 }
 
 fn parameter_example(resolver: &Resolver, p: &serde_json::Value) -> String {

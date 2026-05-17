@@ -1,5 +1,8 @@
 use indexmap::IndexMap;
-use knock_core::{execute, init_at, parser, resolve, OpenApiMark, OpenApiResponseInfo, Workspace};
+use knock_core::{
+    execute, init_at, parser, resolve, OpenApiMark, OpenApiParamSpec, OpenApiResponseInfo,
+    Workspace,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -68,8 +71,97 @@ pub struct OpenApiMarkDto {
     pub path: String,
     pub spec_version: String,
     pub generated_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(default)]
+    pub security: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_description: Option<String>,
+    #[serde(default)]
+    pub body_required: bool,
+    #[serde(default)]
+    pub param_specs: Vec<OpenApiParamSpecDto>,
     #[serde(default)]
     pub responses: IndexMap<String, OpenApiResponseInfoDto>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenApiParamSpecDto {
+    pub name: String,
+    pub location: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ty: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub enum_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+}
+
+impl From<OpenApiParamSpec> for OpenApiParamSpecDto {
+    fn from(p: OpenApiParamSpec) -> Self {
+        Self {
+            name: p.name,
+            location: p.location,
+            required: p.required,
+            deprecated: p.deprecated,
+            description: p.description,
+            ty: p.ty,
+            format: p.format,
+            enum_values: p.enum_values,
+            default: p.default,
+            example: p.example,
+            min: p.min,
+            max: p.max,
+            min_length: p.min_length,
+            max_length: p.max_length,
+            pattern: p.pattern,
+        }
+    }
+}
+
+impl From<OpenApiParamSpecDto> for OpenApiParamSpec {
+    fn from(p: OpenApiParamSpecDto) -> Self {
+        Self {
+            name: p.name,
+            location: p.location,
+            required: p.required,
+            deprecated: p.deprecated,
+            description: p.description,
+            ty: p.ty,
+            format: p.format,
+            enum_values: p.enum_values,
+            default: p.default,
+            example: p.example,
+            min: p.min,
+            max: p.max,
+            min_length: p.min_length,
+            max_length: p.max_length,
+            pattern: p.pattern,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -110,6 +202,12 @@ impl From<OpenApiMark> for OpenApiMarkDto {
             path: m.path,
             spec_version: m.spec_version,
             generated_hash: m.generated_hash,
+            description: m.description,
+            deprecated: m.deprecated,
+            security: m.security,
+            body_description: m.body_description,
+            body_required: m.body_required,
+            param_specs: m.param_specs.into_iter().map(Into::into).collect(),
             responses: m
                 .responses
                 .into_iter()
@@ -126,6 +224,12 @@ impl From<OpenApiMarkDto> for OpenApiMark {
             path: m.path,
             spec_version: m.spec_version,
             generated_hash: m.generated_hash,
+            description: m.description,
+            deprecated: m.deprecated,
+            security: m.security,
+            body_description: m.body_description,
+            body_required: m.body_required,
+            param_specs: m.param_specs.into_iter().map(Into::into).collect(),
             responses: m
                 .responses
                 .into_iter()
@@ -1225,11 +1329,55 @@ struct TomlOpenApiResponse<'a> {
 }
 
 #[derive(Serialize)]
+struct TomlOpenApiParam<'a> {
+    name: &'a str,
+    location: &'a str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    required: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deprecated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ty: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    enum_values: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    example: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_length: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_length: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern: Option<&'a str>,
+}
+
+#[derive(Serialize)]
 struct TomlOpenApi<'a> {
     operation_id: &'a str,
     path: &'a str,
     spec_version: &'a str,
     generated_hash: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deprecated: bool,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    security: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body_description: Option<&'a str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    body_required: bool,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    param_specs: Vec<TomlOpenApiParam<'a>>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     responses: IndexMap<String, TomlOpenApiResponse<'a>>,
 }
@@ -1324,6 +1472,32 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         path: m.path.as_str(),
         spec_version: m.spec_version.as_str(),
         generated_hash: m.generated_hash.as_str(),
+        description: m.description.as_deref(),
+        deprecated: m.deprecated,
+        security: m.security.as_slice(),
+        body_description: m.body_description.as_deref(),
+        body_required: m.body_required,
+        param_specs: m
+            .param_specs
+            .iter()
+            .map(|p| TomlOpenApiParam {
+                name: p.name.as_str(),
+                location: p.location.as_str(),
+                required: p.required,
+                deprecated: p.deprecated,
+                description: p.description.as_deref(),
+                ty: p.ty.as_deref(),
+                format: p.format.as_deref(),
+                enum_values: p.enum_values.as_slice(),
+                default: p.default.as_deref(),
+                example: p.example.as_deref(),
+                min: p.min,
+                max: p.max,
+                min_length: p.min_length,
+                max_length: p.max_length,
+                pattern: p.pattern.as_deref(),
+            })
+            .collect(),
         responses: m
             .responses
             .iter()
