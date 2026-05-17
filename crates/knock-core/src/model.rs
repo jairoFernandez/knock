@@ -54,6 +54,16 @@ pub struct OpenApiMark {
     pub body_required: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_specs: Vec<OpenApiParamSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub produces: Vec<String>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub responses: IndexMap<String, OpenApiResponseInfo>,
 }
@@ -106,6 +116,17 @@ pub struct BodySpec {
     pub file: Option<String>,
     pub json: Option<toml::Value>,
     pub form: Option<IndexMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multipart: Option<Vec<MultipartField>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MultipartField {
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub kind: String, // "text" | "file"
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -153,6 +174,13 @@ pub enum ResolvedBody {
     Json(serde_json::Value),
     Bytes(Vec<u8>),
     Form(Vec<(String, String)>),
+    Multipart(Vec<MultipartPart>),
+}
+
+#[derive(Debug, Clone)]
+pub enum MultipartPart {
+    Text { name: String, value: String },
+    File { name: String, path: String },
 }
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,6 @@
 pub mod flow;
 pub mod fmt;
+pub mod kubeconfigs;
 pub mod model;
 pub mod openapi;
 pub mod parser;

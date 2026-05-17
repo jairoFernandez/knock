@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Tree } from "./Tree";
 import { Editor } from "./Editor";
 import { ResponseView } from "./ResponseView";
@@ -10,6 +9,8 @@ import { NewEntryModal } from "./NewEntryModal";
 import { RequestEditor } from "./RequestEditor";
 import { Dashboard } from "./Dashboard";
 import { Rail, type RailMode } from "./Rail";
+import { KubeconfigsView } from "./KubeconfigsView";
+import { WindowControls, detectIsMac } from "./WindowControls";
 import { FileBrowser } from "./FileBrowser";
 import { GitPanel } from "./GitPanel";
 import { Splitter } from "./Splitter";
@@ -30,8 +31,6 @@ import type {
   TreeEntry,
   WorkspaceInfo,
 } from "./types";
-
-const win = getCurrentWindow();
 
 const TAB_GROUPS_KEY = "knock.layout.tabGroups";
 
@@ -108,6 +107,7 @@ export function App() {
   const [showNewEntry, setShowNewEntry] = useState<false | "request" | "fragment" | "flow" | "environment" | "folder">(false);
   const [newEntryPath, setNewEntryPath] = useState<string>("");
   const [railMode, setRailMode] = useState<RailMode>("workspace");
+  const isMacPlatform = useMemo(() => detectIsMac(), []);
   const [filesRefreshToken, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
@@ -440,34 +440,29 @@ export function App() {
   const currentRunAt = currentRuns[currentIdx]?.at ?? null;
 
   if (!workspace) {
-    const dashCols = activeTool ? `1fr 4px ${toolsWidth}px 36px` : `1fr 36px`;
+    const dashCols = activeTool ? `44px 1fr 4px ${toolsWidth}px 36px` : `44px 1fr 36px`;
     return (
       <div
-        className="app app-dashboard"
+        className={`app app-dashboard${isMacPlatform ? " is-mac" : ""}`}
         style={{ gridTemplateColumns: dashCols }}
       >
         <div className="topbar" data-tauri-drag-region>
           <h1 data-tauri-drag-region>KNOCK</h1>
           <div className="topbar-spacer" data-tauri-drag-region />
-          <div className="win-controls">
-            <button className="win-btn" onClick={() => win.minimize()} title="Minimize">
-              <svg width="10" height="10" viewBox="0 0 10 10"><rect y="4.5" width="10" height="1" fill="currentColor"/></svg>
-            </button>
-            <button className="win-btn" onClick={() => win.toggleMaximize()} title="Maximize">
-              <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>
-            </button>
-            <button className="win-btn close" onClick={() => win.close()} title="Close">
-              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1,1 L9,9 M9,1 L1,9" stroke="currentColor" strokeWidth="1.2"/></svg>
-            </button>
-          </div>
+          <WindowControls />
         </div>
-        <Dashboard
-          onOpen={openWorkspaceAt}
-          onPickDirectory={openWorkspace}
-          onCreate={() => setShowNew(true)}
-          onLoadInfo={loadWorkspace}
-          confirm={confirm}
-        />
+        <Rail mode={railMode} onChange={setRailMode} />
+        {railMode === "kube" ? (
+          <KubeconfigsView />
+        ) : (
+          <Dashboard
+            onOpen={openWorkspaceAt}
+            onPickDirectory={openWorkspace}
+            onCreate={() => setShowNew(true)}
+            onLoadInfo={loadWorkspace}
+            confirm={confirm}
+          />
+        )}
         {activeTool && (
           <>
             <Splitter
@@ -516,7 +511,7 @@ export function App() {
 
   return (
     <div
-      className={`app${workspace.color ? " has-ws-color" : ""}`}
+      className={`app${workspace.color ? " has-ws-color" : ""}${isMacPlatform ? " is-mac" : ""}`}
       style={appStyle}
     >
       <div className="topbar" data-tauri-drag-region>
@@ -718,17 +713,7 @@ export function App() {
             ))}
           </select>
         )}
-        <div className="win-controls">
-          <button className="win-btn" onClick={() => win.minimize()} title="Minimize">
-            <svg width="10" height="10" viewBox="0 0 10 10"><rect y="4.5" width="10" height="1" fill="currentColor"/></svg>
-          </button>
-          <button className="win-btn" onClick={() => win.toggleMaximize()} title="Maximize">
-            <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>
-          </button>
-          <button className="win-btn close" onClick={() => win.close()} title="Close">
-            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1,1 L9,9 M9,1 L1,9" stroke="currentColor" strokeWidth="1.2"/></svg>
-          </button>
-        </div>
+        <WindowControls />
       </div>
 
       <Rail mode={railMode} onChange={setRailMode} />
@@ -979,6 +964,14 @@ export function App() {
             />
           </>
         )}
+        {railMode === "kube" && (
+          <>
+            <div className="panel-header">Kubeconfigs</div>
+            <div className="kube-sidebar-hint">
+              Encrypted with a passphrase (Argon2id + AES-256-GCM). Stored locally per user.
+            </div>
+          </>
+        )}
         {railMode === "git" && workspace && (
           <>
             <div className="panel-header">Git</div>
@@ -998,8 +991,9 @@ export function App() {
       />
 
       <div className="panel editor-panel">
-        {!selected && <div className="empty">Select a request from the tree.</div>}
-        {selected && isRequest && form && (
+        {railMode === "kube" && <KubeconfigsView />}
+        {railMode !== "kube" && !selected && <div className="empty">Select a request from the tree.</div>}
+        {railMode !== "kube" && selected && isRequest && form && (
           <RequestEditor
             form={form}
             vars={varsRecord}
@@ -1008,7 +1002,7 @@ export function App() {
             onSend={runRequest}
           />
         )}
-        {selected && isOpenApi && workspace && (
+        {railMode !== "kube" && selected && isOpenApi && workspace && (
           <OpenApiView
             root={workspace.root}
             rel={selected}
@@ -1017,7 +1011,7 @@ export function App() {
             onReimport={() => setShowOpenApiImport(true)}
           />
         )}
-        {selected && !isRequest && !isOpenApi && (
+        {railMode !== "kube" && selected && !isRequest && !isOpenApi && (
           <>
             <div className="panel-header raw-header">
               <span>{selected}{rawDirty && <span className="dirty-mark"> •</span>}</span>
@@ -1053,13 +1047,16 @@ export function App() {
 
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
-        {error && <div className="error">{error}</div>}
-        {!error && !currentResponse && (
+        {railMode === "kube" && (
+          <div className="empty">Kubeconfigs mode — response inspector hidden.</div>
+        )}
+        {railMode !== "kube" && error && <div className="error">{error}</div>}
+        {railMode !== "kube" && !error && !currentResponse && (
           <div className="empty">
             {isRequest ? "Hit Send to fire the request." : "Open a request to send it."}
           </div>
         )}
-        {currentResponse && (
+        {railMode !== "kube" && currentResponse && (
           <ResponseView
             response={currentResponse}
             history={currentRuns}

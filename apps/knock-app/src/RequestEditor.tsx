@@ -286,6 +286,17 @@ function buildCurl(
       parts.push(`--data-binary ${shellQuote(`@${apply(body.path)}`)}`);
       break;
     }
+    case "multipart": {
+      for (const f of body.multipart) {
+        if (!f.name.trim()) continue;
+        if (f.kind === "file") {
+          parts.push(`-F ${shellQuote(`${apply(f.name)}=@${apply(f.value)}`)}`);
+        } else {
+          parts.push(`-F ${shellQuote(`${apply(f.name)}=${apply(f.value)}`)}`);
+        }
+      }
+      break;
+    }
     case "none":
     default:
       break;
@@ -489,15 +500,24 @@ function UseList({ uses, onChange }: UseListProps) {
 
 function OpInfoBlock({ mark }: { mark: NonNullable<RequestForm["openapi"]> }) {
   const [open, setOpen] = useState(false);
-  const hasDetails =
-    !!(mark.description || mark.deprecated || (mark.security && mark.security.length > 0));
+  const responseCodes = Object.keys(mark.responses ?? {});
+  const hasDetails = !!(mark.description || mark.bodyDescription);
+
+  function codeColor(c: string): string {
+    if (c.startsWith("2")) return "#22c55e";
+    if (c.startsWith("3")) return "#06b6d4";
+    if (c.startsWith("4")) return "#eab308";
+    if (c.startsWith("5")) return "#ef4444";
+    return "#64748b";
+  }
+
   return (
     <div
       style={{
-        padding: "4px 10px",
+        padding: "6px 10px",
         fontSize: 11,
-        background: "rgba(99, 102, 241, 0.12)",
-        color: "#a5b4fc",
+        background: "rgba(99, 102, 241, 0.08)",
+        color: "var(--text)",
         borderBottom: "1px solid var(--border)",
       }}
     >
@@ -506,16 +526,29 @@ function OpInfoBlock({ mark }: { mark: NonNullable<RequestForm["openapi"]> }) {
           display: "flex",
           alignItems: "center",
           gap: 8,
-          cursor: hasDetails ? "pointer" : "default",
+          flexWrap: "wrap",
         }}
-        onClick={() => hasDetails && setOpen((v) => !v)}
-        title={hasDetails ? "Toggle details" : `OpenAPI ${mark.path}`}
       >
-        <span>❖</span>
-        <span>
-          Generated from OpenAPI v{mark.specVersion} ·{" "}
-          <code style={{ color: "inherit" }}>{mark.operationId}</code>
+        <span style={{ color: "#a5b4fc" }}>❖</span>
+        {mark.tag && (
+          <span
+            style={{
+              background: "rgba(99, 102, 241, 0.25)",
+              color: "#a5b4fc",
+              padding: "1px 6px",
+              borderRadius: 3,
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: "uppercase",
+            }}
+          >
+            {mark.tag}
+          </span>
+        )}
+        <span style={{ fontWeight: 600 }}>
+          {mark.summary ?? mark.operationId}
         </span>
+        <code style={{ opacity: 0.6, fontSize: 11 }}>{mark.operationId}</code>
         {mark.deprecated && (
           <span
             style={{
@@ -531,24 +564,104 @@ function OpInfoBlock({ mark }: { mark: NonNullable<RequestForm["openapi"]> }) {
           </span>
         )}
         {mark.security && mark.security.length > 0 && (
-          <span style={{ opacity: 0.7 }}>🔒 {mark.security.join(", ")}</span>
+          <span style={{ opacity: 0.7 }} title="Security schemes">
+            🔒 {mark.security.join(", ")}
+          </span>
         )}
         {hasDetails && (
-          <span style={{ marginLeft: "auto", opacity: 0.6 }}>{open ? "▾" : "▸"}</span>
+          <button
+            onClick={() => setOpen((v) => !v)}
+            style={{
+              marginLeft: "auto",
+              background: "transparent",
+              border: 0,
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 11,
+            }}
+          >
+            {open ? "▾ Hide details" : "▸ Show details"}
+          </button>
         )}
       </div>
-      {open && mark.description && (
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          marginTop: 4,
+          flexWrap: "wrap",
+          fontSize: 10,
+          color: "var(--text-dim)",
+          alignItems: "center",
+        }}
+      >
+        {mark.bodyContentType && (
+          <span>
+            <span style={{ opacity: 0.6 }}>body:</span>{" "}
+            <code>{mark.bodyContentType}</code>
+            {mark.bodyRequired && (
+              <span style={{ color: "#ef4444", marginLeft: 2 }} title="required">
+                *
+              </span>
+            )}
+          </span>
+        )}
+        {mark.accepts && mark.accepts.length > 0 && !mark.bodyContentType && (
+          <span>
+            <span style={{ opacity: 0.6 }}>accepts:</span>{" "}
+            <code>{mark.accepts.join(", ")}</code>
+          </span>
+        )}
+        {mark.produces && mark.produces.length > 0 && (
+          <span>
+            <span style={{ opacity: 0.6 }}>produces:</span>{" "}
+            <code>{mark.produces.join(", ")}</code>
+          </span>
+        )}
+        {responseCodes.length > 0 && (
+          <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ opacity: 0.6 }}>responses:</span>
+            {responseCodes.map((c) => (
+              <span
+                key={c}
+                title={mark.responses?.[c]?.description ?? c}
+                style={{
+                  background: "var(--panel-2, #1a1a1a)",
+                  color: codeColor(c),
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  fontFamily: "var(--mono)",
+                  fontWeight: 600,
+                }}
+              >
+                {c}
+              </span>
+            ))}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", opacity: 0.5 }}>
+          v{mark.specVersion}
+        </span>
+      </div>
+      {open && (
         <div
           style={{
-            marginTop: 6,
-            padding: "6px 4px 4px",
+            marginTop: 8,
+            padding: "8px 4px 4px",
+            borderTop: "1px solid var(--border)",
             color: "var(--text-dim)",
             fontSize: 12,
-            whiteSpace: "pre-wrap",
             lineHeight: 1.5,
           }}
         >
-          {mark.description}
+          {mark.description && (
+            <div style={{ whiteSpace: "pre-wrap" }}>{mark.description}</div>
+          )}
+          {mark.bodyDescription && (
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.6 }}>Body:</span> {mark.bodyDescription}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-use crate::model::{BodySpec, Environment, ResolvedBody, ResolvedRequest};
+use crate::model::{BodySpec, Environment, MultipartPart, ResolvedBody, ResolvedRequest};
 use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
 use indexmap::IndexMap;
@@ -152,6 +152,9 @@ fn resolve_body(
     if spec.form.is_some() {
         count += 1;
     }
+    if spec.multipart.is_some() {
+        count += 1;
+    }
     if count > 1 {
         return Err(ResolveError::AmbiguousBody);
     }
@@ -183,6 +186,25 @@ fn resolve_body(
             pairs.push((interpolate(k, vars)?, interpolate(v, vars)?));
         }
         return Ok(ResolvedBody::Form(pairs));
+    }
+
+    if let Some(fields) = &spec.multipart {
+        let mut parts: Vec<MultipartPart> = Vec::with_capacity(fields.len());
+        for f in fields {
+            let name = interpolate(&f.name, vars)?;
+            if f.kind == "file" {
+                parts.push(MultipartPart::File {
+                    name,
+                    path: interpolate(&f.value, vars)?,
+                });
+            } else {
+                parts.push(MultipartPart::Text {
+                    name,
+                    value: interpolate(&f.value, vars)?,
+                });
+            }
+        }
+        return Ok(ResolvedBody::Multipart(parts));
     }
 
     Ok(ResolvedBody::Text(String::new()))

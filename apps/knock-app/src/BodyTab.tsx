@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BodyForm, KV } from "./types";
+import type { BodyForm, KV, MultipartField } from "./types";
 import { highlightJson } from "./jsonHighlight";
 import { KVTable } from "./KVTable";
 
@@ -15,6 +15,7 @@ const KINDS: { value: BodyForm["kind"]; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "json", label: "JSON" },
   { value: "form", label: "Form" },
+  { value: "multipart", label: "Multipart" },
   { value: "file", label: "File" },
 ];
 
@@ -42,6 +43,11 @@ export function BodyTab({ body, vars, onChange }: Props) {
         return onChange({
           kind: "file",
           path: body.kind === "file" ? body.path : "",
+        });
+      case "multipart":
+        return onChange({
+          kind: "multipart",
+          multipart: body.kind === "multipart" ? body.multipart : [],
         });
     }
   }
@@ -96,6 +102,102 @@ export function BodyTab({ body, vars, onChange }: Props) {
           onChange={(path) => onChange({ kind: "file", path })}
         />
       )}
+
+      {body.kind === "multipart" && (
+        <MultipartBodyEditor
+          fields={body.multipart}
+          onChange={(multipart) => onChange({ kind: "multipart", multipart })}
+        />
+      )}
+    </div>
+  );
+}
+
+function MultipartBodyEditor({
+  fields,
+  onChange,
+}: {
+  fields: MultipartField[];
+  onChange: (next: MultipartField[]) => void;
+}) {
+  function set(i: number, next: MultipartField) {
+    onChange(fields.map((f, j) => (j === i ? next : f)));
+  }
+  function remove(i: number) {
+    onChange(fields.filter((_, j) => j !== i));
+  }
+  function add(kind: "text" | "file") {
+    onChange([...fields, { name: "", value: "", kind }]);
+  }
+  async function pick(i: number) {
+    const picked = await open({ multiple: false, directory: false });
+    if (typeof picked === "string") set(i, { ...fields[i], value: picked });
+  }
+  return (
+    <div className="body-form-wrap">
+      <div className="body-form-hint">
+        Sent as <code>multipart/form-data</code>. File fields upload the picked file.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {fields.map((f, i) => (
+          <div
+            key={i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "70px 180px 1fr 80px 24px",
+              gap: 6,
+              padding: "4px 6px",
+              borderBottom: "1px solid var(--border)",
+              alignItems: "center",
+            }}
+          >
+            <select
+              value={f.kind}
+              onChange={(e) =>
+                set(i, { ...f, kind: e.target.value as "text" | "file" })
+              }
+              style={{ fontSize: 11 }}
+            >
+              <option value="text">text</option>
+              <option value="file">file</option>
+            </select>
+            <input
+              type="text"
+              value={f.name}
+              placeholder="field name"
+              onChange={(e) => set(i, { ...f, name: e.target.value })}
+              spellCheck={false}
+              style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+            />
+            <input
+              type="text"
+              value={f.value}
+              placeholder={f.kind === "file" ? "/path/to/file" : "value"}
+              onChange={(e) => set(i, { ...f, value: e.target.value })}
+              spellCheck={false}
+              style={{ fontFamily: "var(--mono)", fontSize: 12 }}
+            />
+            {f.kind === "file" ? (
+              <button type="button" onClick={() => pick(i)}>
+                Browse…
+              </button>
+            ) : (
+              <span />
+            )}
+            <button type="button" onClick={() => remove(i)}>
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <div style={{ padding: 6, display: "flex", gap: 6 }}>
+        <button type="button" onClick={() => add("text")}>
+          + Text field
+        </button>
+        <button type="button" onClick={() => add("file")}>
+          + File field
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
+use knock_core::kubeconfigs;
 use knock_core::{execute, init_at, resolve, run_flow, Workspace};
 use std::path::PathBuf;
 
@@ -52,6 +53,36 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Manage encrypted kubeconfigs
+    Kube {
+        #[command(subcommand)]
+        action: KubeCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum KubeCmd {
+    /// Add a kubeconfig from a file (encrypts with a passphrase)
+    Add {
+        /// Logical name (A-Z a-z 0-9 . _ -)
+        name: String,
+        /// Path to existing kubeconfig YAML
+        #[arg(long, short)]
+        file: PathBuf,
+        /// Overwrite if it already exists
+        #[arg(long)]
+        force: bool,
+    },
+    /// List stored kubeconfigs
+    List,
+    /// Remove a stored kubeconfig
+    Rm { name: String },
+    /// Decrypt and print kubeconfig to stdout
+    Cat { name: String },
+    /// Decrypt to a temp file (0600) and print its path
+    Export { name: String },
+    /// Decrypt to a temp file and print `export KUBECONFIG=...` for eval
+    Shell { name: String },
 }
 
 #[derive(Subcommand)]
@@ -75,6 +106,88 @@ async fn main() -> Result<()> {
         Cmd::Flow { name, env } => flow(&name, env.as_deref()).await,
         Cmd::Check => check(),
         Cmd::Fmt { check } => fmt(check),
+        Cmd::Kube { action } => kube(action),
+    }
+}
+
+fn kube_store_dir() -> Result<PathBuf> {
+    Ok(kubeconfigs::default_store_dir()?)
+}
+
+fn prompt_passphrase(confirm: bool) -> Result<String> {
+    let p = rpassword::prompt_password("Passphrase: ")?;
+    if confirm {
+        let p2 = rpassword::prompt_password("Confirm passphrase: ")?;
+        if p != p2 {
+            return Err(anyhow!("passphrases do not match"));
+        }
+    }
+    if p.is_empty() {
+        return Err(anyhow!("empty passphrase"));
+    }
+    Ok(p)
+}
+
+fn kube(action: KubeCmd) -> Result<()> {
+    let dir = kube_store_dir()?;
+    match action {
+        KubeCmd::Add { name, file, force } => {
+            let data = std::fs::read(&file)
+                .with_context(|| format!("reading {}", file.display()))?;
+            let pass = prompt_passphrase(true)?;
+            let meta = kubeconfigs::add(&dir, &name, &data, &pass, force)?;
+            println!(
+                "Stored kubeconfig '{}' ({} bytes encrypted) at {}",
+                meta.name,
+                meta.size_bytes,
+                dir.display()
+            );
+            Ok(())
+        }
+        KubeCmd::List => {
+            let items = kubeconfigs::list(&dir)?;
+            if items.is_empty() {
+                println!("(no kubeconfigs in {})", dir.display());
+                return Ok(());
+            }
+            for m in items {
+                println!("{}  ({} bytes)", m.name, m.size_bytes);
+            }
+            Ok(())
+        }
+        KubeCmd::Rm { name } => {
+            kubeconfigs::remove(&dir, &name)?;
+            println!("Removed '{name}'");
+            Ok(())
+        }
+        KubeCmd::Cat { name } => {
+            let pass = prompt_passphrase(false)?;
+            let data = kubeconfigs::get(&dir, &name, &pass)?;
+            use std::io::Write;
+            std::io::stdout().write_all(&data)?;
+            Ok(())
+        }
+        KubeCmd::Export { name } => {
+            let pass = prompt_passphrase(false)?;
+            let path = kubeconfigs::export_temp(&dir, &name, &pass)?;
+            println!("{}", path.display());
+            Ok(())
+        }
+        KubeCmd::Shell { name } => {
+            let pass = prompt_passphrase(false)?;
+            let path = kubeconfigs::export_temp(&dir, &name, &pass)?;
+            println!("export KUBECONFIG={}", shell_quote(&path.to_string_lossy()));
+            eprintln!("# eval \"$(knock kube shell {name})\"");
+            Ok(())
+        }
+    }
+}
+
+fn shell_quote(s: &str) -> String {
+    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=".contains(c)) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
 

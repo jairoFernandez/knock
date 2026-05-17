@@ -23,3 +23,8 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 base64 = "0.22"
 dirs = "5"
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+rpassword = "7"

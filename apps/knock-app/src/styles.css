@@ -89,6 +89,12 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .topbar-spacer { flex: 1; height: 100%; }
+/* macOS: native titlebar already provides traffic lights; offset our custom topbar so it does not collide.
+   Tauri renders the native bar above when decorations are enabled. */
+.app.is-mac .topbar {
+  padding-left: 12px;
+}
+.app.is-mac .win-controls { display: none; }
 .back-btn {
   width: 28px;
   height: 24px;
@@ -1407,6 +1413,111 @@ button.danger:hover:not(:disabled) {
 .body-file-row .body-file { flex: 1; }
 .body-file-row button { font-size: 11px; padding: 4px 12px; }
 .body-file-hint { font-size: 11px; color: var(--text-faint); }
+
+/* ---------- kubeconfigs view ---------- */
+.kube-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  gap: 10px;
+}
+.kube-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+}
+.kube-subtle {
+  font-size: 11px;
+  opacity: 0.6;
+  font-weight: 400;
+  user-select: text;
+}
+.kube-status {
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.kube-status-info { background: rgba(80, 160, 90, 0.18); }
+.kube-status-error { background: rgba(200, 70, 70, 0.22); }
+.kube-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+.kube-section-title {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+.kube-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.kube-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.kube-item:hover { background: rgba(255,255,255,0.04); }
+.kube-item.selected { border-color: var(--accent, #4a90e2); background: rgba(74,144,226,0.08); }
+.kube-item-name { font-weight: 500; }
+.kube-item-meta { grid-column: 1; font-size: 11px; opacity: 0.6; }
+.kube-remove {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  opacity: 0.5;
+}
+.kube-remove:hover { opacity: 1; background: rgba(200,70,70,0.2); }
+.kube-detail { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.kube-empty { font-style: italic; opacity: 0.6; padding: 8px 0; }
+.kube-label { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+.kube-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px 12px;
+  align-items: start;
+}
+.kube-grid input, .kube-grid .kube-textarea {
+  width: 100%;
+}
+.kube-textarea {
+  width: 100%;
+  min-height: 140px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.kube-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.kube-checkbox { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.kube-sidebar-hint {
+  padding: 10px 12px;
+  font-size: 12px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
 
 /* ---------- editor ---------- */
 .editor-panel { display: flex; flex-direction: column; }

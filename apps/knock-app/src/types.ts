@@ -40,12 +40,19 @@ export interface KV {
   value: string;
 }
 
+export interface MultipartField {
+  name: string;
+  value: string;
+  kind: "text" | "file";
+}
+
 export type BodyForm =
   | { kind: "none" }
   | { kind: "text"; text: string }
   | { kind: "json"; json: string }
   | { kind: "form"; form: KV[] }
-  | { kind: "file"; path: string };
+  | { kind: "file"; path: string }
+  | { kind: "multipart"; multipart: MultipartField[] };
 
 export interface OpenApiResponseInfo {
   description?: string | null;
@@ -82,6 +89,11 @@ export interface OpenApiMark {
   bodyDescription?: string | null;
   bodyRequired?: boolean;
   paramSpecs?: OpenApiParamSpec[];
+  tag?: string | null;
+  summary?: string | null;
+  bodyContentType?: string | null;
+  accepts?: string[];
+  produces?: string[];
   responses?: Record<string, OpenApiResponseInfo>;
 }
 

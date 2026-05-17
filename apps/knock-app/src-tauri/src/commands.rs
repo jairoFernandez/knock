@@ -40,6 +40,15 @@ pub enum BodyDto {
     Json { json: String },
     Form { form: Vec<KvDto> },
     File { path: String },
+    Multipart { multipart: Vec<MultipartFieldDto> },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MultipartFieldDto {
+    pub name: String,
+    pub value: String,
+    pub kind: String, // "text" | "file"
 }
 
 impl Default for BodyDto {
@@ -83,6 +92,16 @@ pub struct OpenApiMarkDto {
     pub body_required: bool,
     #[serde(default)]
     pub param_specs: Vec<OpenApiParamSpecDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_content_type: Option<String>,
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    #[serde(default)]
+    pub produces: Vec<String>,
     #[serde(default)]
     pub responses: IndexMap<String, OpenApiResponseInfoDto>,
 }
@@ -208,6 +227,11 @@ impl From<OpenApiMark> for OpenApiMarkDto {
             body_description: m.body_description,
             body_required: m.body_required,
             param_specs: m.param_specs.into_iter().map(Into::into).collect(),
+            tag: m.tag,
+            summary: m.summary,
+            body_content_type: m.body_content_type,
+            accepts: m.accepts,
+            produces: m.produces,
             responses: m
                 .responses
                 .into_iter()
@@ -230,6 +254,11 @@ impl From<OpenApiMarkDto> for OpenApiMark {
             body_description: m.body_description,
             body_required: m.body_required,
             param_specs: m.param_specs.into_iter().map(Into::into).collect(),
+            tag: m.tag,
+            summary: m.summary,
+            body_content_type: m.body_content_type,
+            accepts: m.accepts,
+            produces: m.produces,
             responses: m
                 .responses
                 .into_iter()
@@ -1260,7 +1289,22 @@ fn request_to_form(r: knock_core::Request) -> RequestFormDto {
     let body = match r.body {
         None => BodyDto::None,
         Some(b) => {
-            if let Some(json) = b.json {
+            if let Some(mp) = b.multipart {
+                BodyDto::Multipart {
+                    multipart: mp
+                        .into_iter()
+                        .map(|m| MultipartFieldDto {
+                            name: m.name,
+                            value: m.value,
+                            kind: if m.kind.is_empty() {
+                                "text".into()
+                            } else {
+                                m.kind
+                            },
+                        })
+                        .collect(),
+                }
+            } else if let Some(json) = b.json {
                 let json_val: serde_json::Value =
                     serde_json::to_value(&json).unwrap_or(serde_json::Value::Null);
                 let json_str = serde_json::to_string_pretty(&json_val).unwrap_or_default();
@@ -1316,6 +1360,15 @@ struct TomlBody<'a> {
     json: Option<toml::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     form: Option<IndexMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multipart: Option<Vec<TomlMultipartField<'a>>>,
+}
+
+#[derive(Serialize)]
+struct TomlMultipartField<'a> {
+    name: &'a str,
+    value: &'a str,
+    kind: &'a str,
 }
 
 #[derive(Serialize)]
@@ -1378,6 +1431,16 @@ struct TomlOpenApi<'a> {
     body_required: bool,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     param_specs: Vec<TomlOpenApiParam<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body_content_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    accepts: &'a [String],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    produces: &'a [String],
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     responses: IndexMap<String, TomlOpenApiResponse<'a>>,
 }
@@ -1427,12 +1490,14 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
             file: None,
             json: None,
             form: None,
+            multipart: None,
         }),
         BodyDto::File { path } => Some(TomlBody {
             text: None,
             file: Some(path.as_str()),
             json: None,
             form: None,
+            multipart: None,
         }),
         BodyDto::Json { json } => {
             let value: serde_json::Value = serde_json::from_str(json)
@@ -1443,6 +1508,7 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
                 file: None,
                 json: Some(toml_val),
                 form: None,
+                multipart: None,
             })
         }
         BodyDto::Form { form: pairs } => {
@@ -1456,8 +1522,26 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
                 file: None,
                 json: None,
                 form: Some(map),
+                multipart: None,
             })
         }
+        BodyDto::Multipart { multipart } => Some(TomlBody {
+            text: None,
+            file: None,
+            json: None,
+            form: None,
+            multipart: Some(
+                multipart
+                    .iter()
+                    .filter(|f| !f.name.is_empty())
+                    .map(|f| TomlMultipartField {
+                        name: f.name.as_str(),
+                        value: f.value.as_str(),
+                        kind: if f.kind.is_empty() { "text" } else { f.kind.as_str() },
+                    })
+                    .collect(),
+            ),
+        }),
     };
 
     let path: IndexMap<String, String> = form
@@ -1477,6 +1561,11 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
         security: m.security.as_slice(),
         body_description: m.body_description.as_deref(),
         body_required: m.body_required,
+        tag: m.tag.as_deref(),
+        summary: m.summary.as_deref(),
+        body_content_type: m.body_content_type.as_deref(),
+        accepts: m.accepts.as_slice(),
+        produces: m.produces.as_slice(),
         param_specs: m
             .param_specs
             .iter()

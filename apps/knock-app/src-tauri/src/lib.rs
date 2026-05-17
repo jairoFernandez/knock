@@ -1,4 +1,5 @@
 pub mod commands;
+mod kubeconfig_cmd;
 mod openapi_cmd;
 mod recents;
 
@@ -59,6 +60,13 @@ pub fn run() {
             openapi_cmd::openapi_read_spec,
             openapi_cmd::openapi_save_spec,
             openapi_cmd::openapi_list_history,
+            kubeconfig_cmd::kubeconfig_store_dir,
+            kubeconfig_cmd::kubeconfig_list,
+            kubeconfig_cmd::kubeconfig_add,
+            kubeconfig_cmd::kubeconfig_read_path,
+            kubeconfig_cmd::kubeconfig_get,
+            kubeconfig_cmd::kubeconfig_remove,
+            kubeconfig_cmd::kubeconfig_export_temp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

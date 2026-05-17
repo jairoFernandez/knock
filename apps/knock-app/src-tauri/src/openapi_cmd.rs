@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::commands::{
-    emit_request_toml_pub, BodyDto, KvDto, OpenApiMarkDto, OpenApiParamSpecDto,
+    emit_request_toml_pub, BodyDto, KvDto, MultipartFieldDto, OpenApiMarkDto, OpenApiParamSpecDto,
     OpenApiResponseInfoDto, RequestFormDto, TreeEntry,
 };
 
@@ -322,6 +322,11 @@ pub fn openapi_apply_import(
                     body_description: op.body_description.clone(),
                     body_required: op.body_required,
                     param_specs,
+                    tag: op.tag.clone(),
+                    summary: op.summary.clone(),
+                    body_content_type: op.body_content_type.clone(),
+                    accepts: op.accepts.clone(),
+                    produces: op.produces.clone(),
                     responses,
                 };
                 let mut marked_form = form.clone();
@@ -545,11 +550,41 @@ fn sanitize_segment(s: &str) -> String {
 fn operation_to_request_form(op: &Operation, _spec: &NormalizedSpec) -> RequestFormDto {
     let url = format!("{{{{base_url}}}}{}", openapi::templated_path(&op.path));
 
-    let body = match &op.body_json {
-        Some(v) if !v.is_null() => BodyDto::Json {
-            json: serde_json::to_string_pretty(v).unwrap_or_default(),
-        },
-        _ => BodyDto::None,
+    let ct = op.body_content_type.as_deref().unwrap_or("");
+    let body = if ct.starts_with("multipart/") && !op.form_fields.is_empty() {
+        BodyDto::Multipart {
+            multipart: op
+                .form_fields
+                .iter()
+                .map(|f| MultipartFieldDto {
+                    name: f.name.clone(),
+                    value: String::new(),
+                    kind: f.kind.as_str().to_string(),
+                })
+                .collect(),
+        }
+    } else if ct == "application/x-www-form-urlencoded" && !op.form_fields.is_empty() {
+        BodyDto::Form {
+            form: op
+                .form_fields
+                .iter()
+                .map(|f| KvDto {
+                    key: f.name.clone(),
+                    value: String::new(),
+                })
+                .collect(),
+        }
+    } else if ct == "application/octet-stream" {
+        BodyDto::File {
+            path: String::new(),
+        }
+    } else {
+        match &op.body_json {
+            Some(v) if !v.is_null() => BodyDto::Json {
+                json: serde_json::to_string_pretty(v).unwrap_or_default(),
+            },
+            _ => BodyDto::None,
+        }
     };
 
     RequestFormDto {

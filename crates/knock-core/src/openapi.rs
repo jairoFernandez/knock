@@ -54,7 +54,36 @@ pub struct Operation {
     pub body_json: Option<serde_json::Value>,
     pub body_required: bool,
     pub body_description: Option<String>,
+    pub body_content_type: Option<String>,
+    pub form_fields: Vec<FormField>,
+    pub accepts: Vec<String>,
+    pub produces: Vec<String>,
     pub responses: IndexMap<String, ResponseSchema>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FormField {
+    pub name: String,
+    pub kind: FormFieldKind,
+    pub required: bool,
+    pub description: Option<String>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum FormFieldKind {
+    #[default]
+    Text,
+    File,
+}
+
+impl FormFieldKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FormFieldKind::Text => "text",
+            FormFieldKind::File => "file",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -308,25 +337,83 @@ fn build_operation_oa3(
         .and_then(|rb| rb.get("description"))
         .and_then(|v| v.as_str())
         .map(String::from);
-    let body_json = request_body_node
+
+    // Pick the first content-type entry, preferring json > multipart > octet > else.
+    let content_map: Option<&serde_json::Map<String, serde_json::Value>> = request_body_node
         .and_then(|rb| rb.get("content"))
-        .and_then(|c| {
-            c.get("application/json")
-                .or_else(|| c.get("application/*+json"))
-        })
-        .and_then(|j| {
-            if let Some(ex) = j.get("example") {
-                Some(ex.clone())
-            } else if let Some(examples) = j.get("examples").and_then(|v| v.as_object()) {
-                examples
-                    .values()
-                    .next()
-                    .and_then(|e| e.get("value").cloned())
-            } else {
-                let schema = j.get("schema");
-                schema.and_then(|s| schema_to_example(resolver, s, &mut HashSet::new()))
+        .and_then(|c| c.as_object());
+    let pick_ct = |map: &serde_json::Map<String, serde_json::Value>| -> Option<String> {
+        let prefs = [
+            "application/json",
+            "application/*+json",
+            "multipart/form-data",
+            "application/x-www-form-urlencoded",
+            "application/octet-stream",
+        ];
+        for p in prefs {
+            if map.contains_key(p) {
+                return Some(p.to_string());
             }
-        });
+        }
+        map.keys().next().cloned()
+    };
+    let body_content_type = content_map.and_then(pick_ct);
+
+    let mut form_fields: Vec<FormField> = Vec::new();
+    let mut body_json: Option<serde_json::Value> = None;
+
+    if let (Some(ct), Some(map)) = (body_content_type.as_deref(), content_map) {
+        let media = map.get(ct);
+        match ct {
+            "application/json" | "application/*+json" => {
+                body_json = media.and_then(|j| {
+                    if let Some(ex) = j.get("example") {
+                        Some(ex.clone())
+                    } else if let Some(examples) = j.get("examples").and_then(|v| v.as_object()) {
+                        examples
+                            .values()
+                            .next()
+                            .and_then(|e| e.get("value").cloned())
+                    } else {
+                        let schema = j.get("schema");
+                        schema.and_then(|s| schema_to_example(resolver, s, &mut HashSet::new()))
+                    }
+                });
+            }
+            "multipart/form-data" | "application/x-www-form-urlencoded" => {
+                if let Some(media) = media {
+                    let schema = media.get("schema").map(|s| resolver.deref(s));
+                    let encoding = media.get("encoding").and_then(|v| v.as_object());
+                    if let Some(schema) = schema {
+                        form_fields = extract_form_fields(resolver, schema, encoding);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let accepts: Vec<String> = content_map
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    let produces: Vec<String> = op
+        .get("responses")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            let mut out: Vec<String> = Vec::new();
+            for r in m.values() {
+                let r = resolver.deref(r);
+                if let Some(c) = r.get("content").and_then(|c| c.as_object()) {
+                    for k in c.keys() {
+                        if !out.contains(k) {
+                            out.push(k.clone());
+                        }
+                    }
+                }
+            }
+            out
+        })
+        .unwrap_or_default();
 
     let mut responses = IndexMap::new();
     if let Some(resps) = op.get("responses").and_then(|v| v.as_object()) {
@@ -390,8 +477,57 @@ fn build_operation_oa3(
         body_json,
         body_required,
         body_description,
+        body_content_type,
+        form_fields,
+        accepts,
+        produces,
         responses,
     }
+}
+
+fn extract_form_fields(
+    resolver: &Resolver,
+    schema: &serde_json::Value,
+    encoding: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Vec<FormField> {
+    let schema = resolver.deref(schema);
+    let required: HashSet<String> = schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let mut out: Vec<FormField> = Vec::new();
+    if let Some(props) = schema.get("properties").and_then(|v| v.as_object()) {
+        for (name, sub) in props {
+            let sub = resolver.deref(sub);
+            let ty = sub.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let format = sub.get("format").and_then(|v| v.as_str()).unwrap_or("");
+            let description = sub
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let enc_ct = encoding
+                .and_then(|e| e.get(name))
+                .and_then(|v| v.get("contentType"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let kind = if format == "binary" || format == "byte" {
+                FormFieldKind::File
+            } else if ty == "string" && enc_ct.as_deref().is_some_and(|ct| !ct.starts_with("text/")) {
+                FormFieldKind::File
+            } else {
+                FormFieldKind::Text
+            };
+            out.push(FormField {
+                name: name.clone(),
+                kind,
+                required: required.contains(name),
+                description,
+                content_type: enc_ct,
+            });
+        }
+    }
+    out
 }
 
 fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiError> {
@@ -509,6 +645,7 @@ fn build_operation_swagger2(
     let mut body_json = None;
     let mut body_required = false;
     let mut body_description: Option<String> = None;
+    let mut form_fields: Vec<FormField> = Vec::new();
     for raw in parameters {
         let p = resolver.deref(raw);
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -536,6 +673,24 @@ fn build_operation_swagger2(
                     .and_then(|v| v.as_str())
                     .map(String::from);
             }
+            "formData" => {
+                let ty = p.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let kind = if ty == "file" {
+                    FormFieldKind::File
+                } else {
+                    FormFieldKind::Text
+                };
+                form_fields.push(FormField {
+                    name: name.to_string(),
+                    kind,
+                    required: p.get("required").and_then(|v| v.as_bool()).unwrap_or(false),
+                    description: p
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    content_type: None,
+                });
+            }
             _ => {}
         }
         if matches!(location, "path" | "query" | "header") {
@@ -544,6 +699,32 @@ fn build_operation_swagger2(
             }
         }
     }
+
+    let consumes: Vec<String> = op
+        .get("consumes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let produces: Vec<String> = op
+        .get("produces")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let body_content_type: Option<String> = if !form_fields.is_empty() {
+        consumes
+            .iter()
+            .find(|c| c.starts_with("multipart/"))
+            .cloned()
+            .or_else(|| Some("multipart/form-data".to_string()))
+    } else if body_json.is_some() {
+        consumes
+            .iter()
+            .find(|c| c.contains("json"))
+            .cloned()
+            .or_else(|| Some("application/json".to_string()))
+    } else {
+        consumes.first().cloned()
+    };
 
     let mut responses = IndexMap::new();
     if let Some(resps) = op.get("responses").and_then(|v| v.as_object()) {
@@ -583,6 +764,10 @@ fn build_operation_swagger2(
         body_json,
         body_required,
         body_description,
+        body_content_type,
+        form_fields,
+        accepts: consumes,
+        produces,
         responses,
     }
 }

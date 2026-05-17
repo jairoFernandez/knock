@@ -1,4 +1,4 @@
-use crate::model::{ResolvedBody, ResolvedRequest, Response};
+use crate::model::{MultipartPart, ResolvedBody, ResolvedRequest, Response};
 use indexmap::IndexMap;
 use std::time::Instant;
 
@@ -12,6 +12,12 @@ pub enum RunError {
     InvalidHeaderName(String),
     #[error("invalid header value for '{0}'")]
     InvalidHeaderValue(String),
+    #[error("io error reading multipart file {path}: {source}")]
+    MultipartIo {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 pub async fn execute(req: &ResolvedRequest) -> Result<Response, RunError> {
@@ -41,6 +47,32 @@ pub async fn execute(req: &ResolvedRequest) -> Result<Response, RunError> {
             ResolvedBody::Bytes(b) => builder.body(b.clone()),
             ResolvedBody::Json(j) => builder.json(j),
             ResolvedBody::Form(pairs) => builder.form(pairs),
+            ResolvedBody::Multipart(parts) => {
+                let mut form = reqwest::multipart::Form::new();
+                for p in parts {
+                    match p {
+                        MultipartPart::Text { name, value } => {
+                            form = form.text(name.clone(), value.clone());
+                        }
+                        MultipartPart::File { name, path } => {
+                            let bytes = std::fs::read(path).map_err(|source| {
+                                RunError::MultipartIo {
+                                    path: path.clone(),
+                                    source,
+                                }
+                            })?;
+                            let filename = std::path::Path::new(path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| name.clone());
+                            let part = reqwest::multipart::Part::bytes(bytes)
+                                .file_name(filename);
+                            form = form.part(name.clone(), part);
+                        }
+                    }
+                }
+                builder.multipart(form)
+            }
         };
     }
 
