@@ -5,7 +5,11 @@ use knock_core::{execute, init_at, resolve, run_flow, Workspace};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "knock", version, about = "Modular HTTP client with git-native workspaces")]
+#[command(
+    name = "knock",
+    version,
+    about = "Modular HTTP client with git-native workspaces"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -170,8 +174,8 @@ fn kube(action: KubeCmd) -> Result<()> {
             no_encrypt,
             force,
         } => {
-            let data = std::fs::read(&file)
-                .with_context(|| format!("reading {}", file.display()))?;
+            let data =
+                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
             let project = project_or_default(project);
             let pass = if no_encrypt {
                 None
@@ -179,7 +183,11 @@ fn kube(action: KubeCmd) -> Result<()> {
                 Some(prompt_passphrase(true)?)
             };
             let meta = kubeconfigs::add(&dir, &project, &name, &data, pass.as_deref(), force)?;
-            let label = if meta.encrypted { "encrypted" } else { "plaintext" };
+            let label = if meta.encrypted {
+                "encrypted"
+            } else {
+                "plaintext"
+            };
             println!(
                 "Stored kubeconfig '{}' ({}) in project '{}' — {} bytes at {}",
                 meta.name,
@@ -260,7 +268,9 @@ fn passphrase_if_encrypted(dir: &PathBuf, project: &str, name: &str) -> Result<O
 }
 
 fn shell_quote(s: &str) -> String {
-    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=".contains(c)) {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./:=".contains(c))
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -277,7 +287,11 @@ fn fmt(check_only: bool) -> Result<()> {
         if r.changed {
             changed_count += 1;
             let rel = r.path.strip_prefix(&workspace.root).unwrap_or(&r.path);
-            let label = if check_only { "would format" } else { "formatted" };
+            let label = if check_only {
+                "would format"
+            } else {
+                "formatted"
+            };
             println!("{label} {}", rel.display());
         }
     }
@@ -347,7 +361,11 @@ async fn flow(name: &str, env_override: Option<&str>) -> Result<()> {
     }
     let mut all_ok = true;
     for step in &outcome.steps {
-        let mark = if step.failures.is_empty() { "OK" } else { "FAIL" };
+        let mark = if step.failures.is_empty() {
+            "OK"
+        } else {
+            "FAIL"
+        };
         println!(
             "  [{mark:>4}] {} — {} ({} ms)",
             step.name, step.status, step.elapsed_ms

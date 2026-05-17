@@ -196,3 +196,112 @@ impl Response {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_config_roundtrip() {
+        let raw = "name = \"w\"\ndefault_env = \"local\"\ncolor = \"#fff\"\nicon = \"x\"\n";
+        let cfg: WorkspaceConfig = toml::from_str(raw).unwrap();
+        assert_eq!(cfg.name.as_deref(), Some("w"));
+        assert_eq!(cfg.default_env.as_deref(), Some("local"));
+        assert_eq!(cfg.color.as_deref(), Some("#fff"));
+        assert_eq!(cfg.icon.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn workspace_config_defaults() {
+        let cfg: WorkspaceConfig = toml::from_str("").unwrap();
+        assert!(cfg.name.is_none());
+        assert!(cfg.default_env.is_none());
+    }
+
+    #[test]
+    fn request_minimal_defaults() {
+        let req: Request = toml::from_str("method = \"GET\"\nurl = \"http://x\"\n").unwrap();
+        assert_eq!(req.method, "GET");
+        assert!(req.headers.is_empty());
+        assert!(req.uses.is_empty());
+        assert!(req.body.is_none());
+    }
+
+    #[test]
+    fn request_with_body_json() {
+        let raw = "method = \"POST\"\nurl = \"http://x\"\n[body]\njson = { a = 1 }\n";
+        let req: Request = toml::from_str(raw).unwrap();
+        let body = req.body.unwrap();
+        assert!(body.json.is_some());
+        assert!(body.text.is_none());
+    }
+
+    #[test]
+    fn fragment_roundtrip() {
+        let raw = "[headers]\nA = \"1\"\n[query]\nq = \"v\"\n";
+        let frag: Fragment = toml::from_str(raw).unwrap();
+        assert_eq!(frag.headers.get("A").unwrap(), "1");
+        assert_eq!(frag.query.get("q").unwrap(), "v");
+    }
+
+    #[test]
+    fn environment_flat_vars() {
+        let env: Environment = toml::from_str("a = \"1\"\nb = \"2\"\n").unwrap();
+        assert_eq!(env.vars.get("a").unwrap(), "1");
+        assert_eq!(env.vars.get("b").unwrap(), "2");
+    }
+
+    #[test]
+    fn flow_with_steps() {
+        let raw = "name = \"f\"\n[[steps]]\nrequest = \"r1\"\n[steps.expect]\nstatus = 200\n";
+        let flow: Flow = toml::from_str(raw).unwrap();
+        assert_eq!(flow.name.as_deref(), Some("f"));
+        assert_eq!(flow.steps.len(), 1);
+        assert_eq!(flow.steps[0].expect.status, Some(200));
+    }
+
+    #[test]
+    fn openapi_mark_optional_fields_omitted() {
+        let raw =
+            "operation_id = \"op\"\npath = \"/p\"\nspec_version = \"3\"\ngenerated_hash = \"h\"\n";
+        let m: OpenApiMark = toml::from_str(raw).unwrap();
+        assert_eq!(m.operation_id, "op");
+        assert!(!m.deprecated);
+        assert!(m.security.is_empty());
+
+        let s = toml::to_string(&m).unwrap();
+        assert!(!s.contains("deprecated"));
+        assert!(!s.contains("security"));
+    }
+
+    #[test]
+    fn body_spec_form_only() {
+        let raw = "[form]\nk = \"v\"\n";
+        let body: BodySpec = toml::from_str(raw).unwrap();
+        assert_eq!(body.form.as_ref().unwrap().get("k").unwrap(), "v");
+        assert!(body.text.is_none());
+    }
+
+    #[test]
+    fn response_body_string_lossy_utf8() {
+        let r = Response {
+            status: 200,
+            headers: IndexMap::new(),
+            body: vec![b'h', b'i'],
+            elapsed: Duration::from_millis(10),
+        };
+        assert_eq!(r.body_string(), "hi");
+    }
+
+    #[test]
+    fn response_body_string_invalid_utf8_replaces() {
+        let r = Response {
+            status: 200,
+            headers: IndexMap::new(),
+            body: vec![0xff, 0xfe],
+            elapsed: Duration::ZERO,
+        };
+        let s = r.body_string();
+        assert!(!s.is_empty());
+    }
+}

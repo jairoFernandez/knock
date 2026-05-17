@@ -203,10 +203,7 @@ fn parse_openapi3(
     format: SpecFormat,
 ) -> Result<NormalizedSpec, OpenApiError> {
     let info = value.get("info").cloned().unwrap_or_default();
-    let title = info
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let title = info.get("title").and_then(|v| v.as_str()).map(String::from);
     let version = info
         .get("version")
         .and_then(|v| v.as_str())
@@ -244,7 +241,13 @@ fn parse_openapi3(
                 if let Some(arr) = op.get("parameters").and_then(|v| v.as_array()) {
                     parameters.extend(arr.iter().cloned());
                 }
-                operations.push(build_operation_oa3(&resolver, method, path, op, &parameters));
+                operations.push(build_operation_oa3(
+                    &resolver,
+                    method,
+                    path,
+                    op,
+                    &parameters,
+                ));
             }
         }
     }
@@ -276,10 +279,7 @@ fn build_operation_oa3(
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
         .map(String::from);
-    let summary = op
-        .get("summary")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let summary = op.get("summary").and_then(|v| v.as_str()).map(String::from);
     let description = op
         .get("description")
         .and_then(|v| v.as_str())
@@ -423,33 +423,32 @@ fn build_operation_oa3(
                 .get("description")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            let (content_type, example) = if let Some(content) =
-                r.get("content").and_then(|c| c.as_object())
-            {
-                let key = content
-                    .keys()
-                    .find(|k| k.starts_with("application/json") || k.contains("+json"))
-                    .cloned()
-                    .or_else(|| content.keys().next().cloned());
-                let example = key.as_deref().and_then(|k| {
-                    let media = content.get(k)?;
-                    if let Some(ex) = media.get("example") {
-                        return Some(ex.clone());
-                    }
-                    if let Some(examples) = media.get("examples").and_then(|v| v.as_object()) {
-                        if let Some(first) = examples.values().next() {
-                            if let Some(v) = first.get("value") {
-                                return Some(v.clone());
+            let (content_type, example) =
+                if let Some(content) = r.get("content").and_then(|c| c.as_object()) {
+                    let key = content
+                        .keys()
+                        .find(|k| k.starts_with("application/json") || k.contains("+json"))
+                        .cloned()
+                        .or_else(|| content.keys().next().cloned());
+                    let example = key.as_deref().and_then(|k| {
+                        let media = content.get(k)?;
+                        if let Some(ex) = media.get("example") {
+                            return Some(ex.clone());
+                        }
+                        if let Some(examples) = media.get("examples").and_then(|v| v.as_object()) {
+                            if let Some(first) = examples.values().next() {
+                                if let Some(v) = first.get("value") {
+                                    return Some(v.clone());
+                                }
                             }
                         }
-                    }
-                    let schema = media.get("schema")?;
-                    schema_to_example(resolver, schema, &mut HashSet::new())
-                });
-                (key, example)
-            } else {
-                (None, None)
-            };
+                        let schema = media.get("schema")?;
+                        schema_to_example(resolver, schema, &mut HashSet::new())
+                    });
+                    (key, example)
+                } else {
+                    (None, None)
+                };
             responses.insert(
                 code.clone(),
                 ResponseSchema {
@@ -494,7 +493,11 @@ fn extract_form_fields(
     let required: HashSet<String> = schema
         .get("required")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let mut out: Vec<FormField> = Vec::new();
     if let Some(props) = schema.get("properties").and_then(|v| v.as_object()) {
@@ -513,7 +516,8 @@ fn extract_form_fields(
                 .map(String::from);
             let kind = if format == "binary" || format == "byte" {
                 FormFieldKind::File
-            } else if ty == "string" && enc_ct.as_deref().is_some_and(|ct| !ct.starts_with("text/")) {
+            } else if ty == "string" && enc_ct.as_deref().is_some_and(|ct| !ct.starts_with("text/"))
+            {
                 FormFieldKind::File
             } else {
                 FormFieldKind::Text
@@ -532,10 +536,7 @@ fn extract_form_fields(
 
 fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiError> {
     let info = value.get("info").cloned().unwrap_or_default();
-    let title = info
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let title = info.get("title").and_then(|v| v.as_str()).map(String::from);
     let version = info
         .get("version")
         .and_then(|v| v.as_str())
@@ -548,10 +549,7 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
         .and_then(|v| v.as_str())
         .unwrap_or("https");
     let host = value.get("host").and_then(|v| v.as_str()).unwrap_or("");
-    let base_path = value
-        .get("basePath")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let base_path = value.get("basePath").and_then(|v| v.as_str()).unwrap_or("");
     let base_url = if host.is_empty() {
         None
     } else {
@@ -571,9 +569,7 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            for method in &[
-                "get", "post", "put", "patch", "delete", "head", "options",
-            ] {
+            for method in &["get", "post", "put", "patch", "delete", "head", "options"] {
                 let Some(op) = item_obj.get(*method) else {
                     continue;
                 };
@@ -582,7 +578,11 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
                     parameters.extend(arr.iter().cloned());
                 }
                 operations.push(build_operation_swagger2(
-                    &resolver, method, path, op, &parameters,
+                    &resolver,
+                    method,
+                    path,
+                    op,
+                    &parameters,
                 ));
             }
         }
@@ -615,10 +615,7 @@ fn build_operation_swagger2(
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
         .map(String::from);
-    let summary = op
-        .get("summary")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let summary = op.get("summary").and_then(|v| v.as_str()).map(String::from);
     let description = op
         .get("description")
         .and_then(|v| v.as_str())
@@ -703,12 +700,20 @@ fn build_operation_swagger2(
     let consumes: Vec<String> = op
         .get("consumes")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let produces: Vec<String> = op
         .get("produces")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let body_content_type: Option<String> = if !form_fields.is_empty() {
         consumes
@@ -805,9 +810,7 @@ fn build_param_spec(resolver: &Resolver, p: &serde_json::Value) -> Option<ParamS
         format,
         enum_values,
         default,
-        example: example.or_else(|| {
-            p.get("example").map(value_to_string)
-        }),
+        example: example.or_else(|| p.get("example").map(value_to_string)),
         min,
         max,
         min_length: min_len,
@@ -860,7 +863,16 @@ fn extract_schema_meta(
         .and_then(|v| v.as_str())
         .map(String::from);
     (
-        ty, format, enum_values, default, example, min, max, min_len, max_len, pattern,
+        ty,
+        format,
+        enum_values,
+        default,
+        example,
+        min,
+        max,
+        min_len,
+        max_len,
+        pattern,
     )
 }
 
@@ -877,7 +889,12 @@ fn parameter_example(resolver: &Resolver, p: &serde_json::Value) -> String {
             return value_to_string(def);
         }
         if let Some(ex) = schema_to_example(resolver, schema, &mut HashSet::new()) {
-            if matches!(ex, serde_json::Value::String(_) | serde_json::Value::Number(_) | serde_json::Value::Bool(_)) {
+            if matches!(
+                ex,
+                serde_json::Value::String(_)
+                    | serde_json::Value::Number(_)
+                    | serde_json::Value::Bool(_)
+            ) {
                 return value_to_string(&ex);
             }
         }
@@ -944,8 +961,7 @@ fn schema_to_example(
     if let Some(arr) = schema.get("allOf").and_then(|v| v.as_array()) {
         let mut merged = serde_json::Map::new();
         for sub in arr {
-            if let Some(serde_json::Value::Object(obj)) =
-                schema_to_example(resolver, sub, visited)
+            if let Some(serde_json::Value::Object(obj)) = schema_to_example(resolver, sub, visited)
             {
                 for (k, v) in obj {
                     merged.insert(k, v);
@@ -1315,11 +1331,17 @@ mod tests {
 
     #[test]
     fn templated_path_replaces_braces() {
-        assert_eq!(templated_path("/users/{id}/posts/{pid}"), "/users/{{id}}/posts/{{pid}}");
+        assert_eq!(
+            templated_path("/users/{id}/posts/{pid}"),
+            "/users/{{id}}/posts/{{pid}}"
+        );
     }
 
     #[test]
     fn synth_operation_id_safe() {
-        assert_eq!(synth_operation_id("get", "/users/{id}/posts"), "get_users_id_posts");
+        assert_eq!(
+            synth_operation_id("get", "/users/{id}/posts"),
+            "get_users_id_posts"
+        );
     }
 }

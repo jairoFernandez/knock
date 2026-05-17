@@ -27,7 +27,10 @@ fn var_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}").unwrap())
 }
 
-pub fn interpolate(template: &str, vars: &IndexMap<String, String>) -> Result<String, ResolveError> {
+pub fn interpolate(
+    template: &str,
+    vars: &IndexMap<String, String>,
+) -> Result<String, ResolveError> {
     let re = var_re();
     let mut out = String::with_capacity(template.len());
     let mut last = 0;
@@ -240,7 +243,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> IndexMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -268,5 +274,222 @@ mod tests {
     fn interpolate_no_vars() {
         let v = vars(&[]);
         assert_eq!(interpolate("plain text", &v).unwrap(), "plain text");
+    }
+
+    use crate::workspace::{init_at, Workspace};
+    use tempfile::TempDir;
+
+    fn make_ws() -> (TempDir, Workspace) {
+        let tmp = TempDir::new().unwrap();
+        let root = init_at(tmp.path(), "r", false).unwrap();
+        let ws = Workspace::load(root).unwrap();
+        (tmp, ws)
+    }
+
+    #[test]
+    fn fragment_use_merges_headers_and_query() {
+        let (_t, ws) = make_ws();
+        std::fs::write(
+            ws.fragment_path("auth"),
+            "[headers]\nAuthorization = \"Bearer X\"\n[query]\napi = \"1\"\n",
+        )
+        .unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"GET\"\nurl = \"http://x\"\nuse = [\"auth\"]\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, None).unwrap();
+        assert_eq!(resolved.headers.get("Authorization").unwrap(), "Bearer X");
+        assert_eq!(resolved.query.get("api").unwrap(), "1");
+    }
+
+    #[test]
+    fn request_overrides_fragment_values() {
+        let (_t, ws) = make_ws();
+        std::fs::write(ws.fragment_path("base"), "[headers]\nX = \"frag\"\n").unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"GET\"\nurl = \"http://x\"\nuse = [\"base\"]\n[headers]\nX = \"req\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, None).unwrap();
+        assert_eq!(resolved.headers.get("X").unwrap(), "req");
+    }
+
+    #[test]
+    fn path_params_override_env_in_url() {
+        let (_t, ws) = make_ws();
+        std::fs::write(ws.root.join("environments/local.toml"), "id = \"env\"\n").unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"GET\"\nurl = \"http://x/{{id}}\"\n[path]\nid = \"req\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, Some("local")).unwrap();
+        assert_eq!(resolved.url, "http://x/req");
+    }
+
+    #[test]
+    fn missing_var_returns_error() {
+        let (_t, ws) = make_ws();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"GET\"\nurl = \"http://x/{{ghost}}\"\n",
+        )
+        .unwrap();
+        let err = resolve(&ws, &req_path, None).unwrap_err();
+        assert!(matches!(err, ResolveError::MissingVar(_)));
+    }
+
+    #[test]
+    fn ambiguous_body_returns_error() {
+        let (_t, ws) = make_ws();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body]\ntext = \"a\"\njson = { a = 1 }\n",
+        )
+        .unwrap();
+        let err = resolve(&ws, &req_path, None).unwrap_err();
+        assert!(matches!(err, ResolveError::AmbiguousBody));
+    }
+
+    #[test]
+    fn body_text_interpolates() {
+        let (_t, ws) = make_ws();
+        std::fs::write(
+            ws.root.join("environments/local.toml"),
+            "name = \"world\"\n",
+        )
+        .unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body]\ntext = \"hi {{name}}\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, Some("local")).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Text(s) => assert_eq!(s, "hi world"),
+            other => panic!("expected text body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_json_interpolates_nested() {
+        let (_t, ws) = make_ws();
+        std::fs::write(ws.root.join("environments/local.toml"), "id = \"42\"\n").unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body.json]\nid = \"{{id}}\"\nnested = { v = \"{{id}}\" }\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, Some("local")).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Json(j) => {
+                assert_eq!(j["id"], "42");
+                assert_eq!(j["nested"]["v"], "42");
+            }
+            other => panic!("expected json body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_file_reads_relative_to_request() {
+        let (_t, ws) = make_ws();
+        let req_dir = ws.root.join("requests");
+        std::fs::write(req_dir.join("payload.bin"), b"BINARY").unwrap();
+        let req_path = req_dir.join("r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body]\nfile = \"payload.bin\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, None).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Bytes(b) => assert_eq!(b, b"BINARY"),
+            other => panic!("expected bytes body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_file_missing_returns_io_error() {
+        let (_t, ws) = make_ws();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body]\nfile = \"nope.bin\"\n",
+        )
+        .unwrap();
+        let err = resolve(&ws, &req_path, None).unwrap_err();
+        assert!(matches!(err, ResolveError::BodyIo { .. }));
+    }
+
+    #[test]
+    fn body_form_interpolates_keys_and_values() {
+        let (_t, ws) = make_ws();
+        std::fs::write(
+            ws.root.join("environments/local.toml"),
+            "k = \"key\"\nv = \"val\"\n",
+        )
+        .unwrap();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[body.form]\n\"{{k}}\" = \"{{v}}\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, Some("local")).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Form(pairs) => {
+                assert_eq!(pairs, vec![("key".to_string(), "val".to_string())]);
+            }
+            other => panic!("expected form, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_multipart_routes_file_vs_text() {
+        let (_t, ws) = make_ws();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(
+            &req_path,
+            "method = \"POST\"\nurl = \"http://x\"\n[[body.multipart]]\nname = \"a\"\nvalue = \"plain\"\nkind = \"text\"\n[[body.multipart]]\nname = \"b\"\nvalue = \"/tmp/p\"\nkind = \"file\"\n",
+        )
+        .unwrap();
+        let resolved = resolve(&ws, &req_path, None).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Multipart(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert!(matches!(parts[0], MultipartPart::Text { .. }));
+                assert!(matches!(parts[1], MultipartPart::File { .. }));
+            }
+            other => panic!("expected multipart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_body_spec_yields_empty_text() {
+        let (_t, ws) = make_ws();
+        let req_path = ws.root.join("requests/r.toml");
+        std::fs::write(&req_path, "method = \"POST\"\nurl = \"http://x\"\n[body]\n").unwrap();
+        let resolved = resolve(&ws, &req_path, None).unwrap();
+        match resolved.body.unwrap() {
+            ResolvedBody::Text(s) => assert!(s.is_empty()),
+            other => panic!("expected empty text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_env_yields_empty_vars() {
+        let (_t, ws) = make_ws();
+        let vars = load_env_vars(&ws, None).unwrap();
+        assert!(vars.is_empty());
     }
 }

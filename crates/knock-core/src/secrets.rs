@@ -28,7 +28,10 @@ fn patterns() -> &'static [Pattern] {
             ("google_api_key", r"AIza[0-9A-Za-z\-_]{35}"),
             ("openai_key", r"sk-[A-Za-z0-9]{32,}"),
             ("bearer_literal", r"Bearer\s+[A-Za-z0-9_\-\.=]{20,}"),
-            ("jwt", r"eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+            (
+                "jwt",
+                r"eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+",
+            ),
         ];
         raw.iter()
             .map(|(kind, pat)| Pattern {
@@ -112,13 +115,15 @@ mod tests {
     #[test]
     fn ignores_templated_bearer() {
         let findings = scan_text("Authorization = \"Bearer {{token}}\"");
-        assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+        assert!(
+            findings.is_empty(),
+            "expected no findings, got {findings:?}"
+        );
     }
 
     #[test]
     fn detects_literal_bearer() {
-        let findings =
-            scan_text("Authorization = \"Bearer abcdef1234567890ABCDEFGHIJ\"");
+        let findings = scan_text("Authorization = \"Bearer abcdef1234567890ABCDEFGHIJ\"");
         assert!(findings.iter().any(|(_, k, _)| *k == "bearer_literal"));
     }
 
@@ -126,5 +131,96 @@ mod tests {
     fn clean_text_yields_nothing() {
         let findings = scan_text("just some plain config\nname = \"hello\"");
         assert!(findings.is_empty());
+    }
+
+    use crate::workspace::init_at;
+    use rstest::rstest;
+    use tempfile::TempDir;
+
+    #[rstest]
+    #[case::stripe("token = \"sk_live_abcdef1234567890XYZ\"", "stripe")]
+    #[case::github_pat("token = \"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789\"", "github_pat")]
+    #[case::aws("token = \"AKIAIOSFODNN7EXAMPLE\"", "aws_access_key")]
+    #[case::google(
+        "token = \"AIzaSyA-1234567890_aaaaaaaaaaaaaaaaaaaaa\"",
+        "google_api_key"
+    )]
+    #[case::openai(
+        "token = \"sk-AbCdEfGhIjKlMnOpQrStUvWxYz01234567890ABCDE\"",
+        "openai_key"
+    )]
+    #[case::slack("token = \"xoxb-abcdef0123456789\"", "slack_token")]
+    #[case::bearer("auth = \"Bearer abcdef1234567890ABCDEFGHIJ\"", "bearer_literal")]
+    #[case::jwt("token = \"eyJabc.eyJpd-_.signaturepart_-\"", "jwt")]
+    fn detects_pattern(#[case] text: &str, #[case] expected_kind: &str) {
+        let findings = scan_text(text);
+        assert!(
+            findings.iter().any(|(_, k, _)| *k == expected_kind),
+            "expected {expected_kind} match in: {text}\nfindings: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn line_numbers_are_one_based() {
+        let findings = scan_text("first line\nsecond = \"sk_test_abcdef1234567890XYZ\"\n");
+        assert_eq!(findings[0].0, 2);
+    }
+
+    #[test]
+    fn templated_values_are_skipped() {
+        let findings = scan_text("auth = \"Bearer {{token}}\"");
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn scan_workspace_walks_subdirs_and_excludes_local() {
+        let tmp = TempDir::new().unwrap();
+        let root = init_at(tmp.path(), "ws", false).unwrap();
+        std::fs::write(
+            root.join("requests/leak.toml"),
+            "token = \"AKIAIOSFODNN7EXAMPLE\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("environments/dev.local.toml"),
+            "token = \"AKIAIOSFODNN7EXAMPLE\"\n",
+        )
+        .unwrap();
+        let ws = crate::workspace::Workspace::load(root).unwrap();
+        let findings = scan_workspace(&ws).unwrap();
+        assert!(
+            findings.iter().any(|f| f.file.ends_with("leak.toml")),
+            "expected leak.toml finding"
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|f| !f.file.to_string_lossy().contains(".local.toml")),
+            ".local.toml should be excluded"
+        );
+    }
+
+    #[test]
+    fn scan_workspace_excludes_special_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let root = init_at(tmp.path(), "ws", false).unwrap();
+        for dir in [
+            ".git",
+            "target",
+            "node_modules",
+            ".knock",
+            ".idea",
+            ".vscode",
+        ] {
+            let d = root.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("hit.toml"), "token = \"AKIAIOSFODNN7EXAMPLE\"\n").unwrap();
+        }
+        let ws = crate::workspace::Workspace::load(root).unwrap();
+        let findings = scan_workspace(&ws).unwrap();
+        assert!(
+            findings.is_empty(),
+            "expected no findings, got {findings:?}"
+        );
     }
 }

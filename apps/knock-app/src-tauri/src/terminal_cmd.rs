@@ -52,11 +52,8 @@ const LINUX_TERMINALS: &[(&str, &str)] = &[
 ];
 
 #[cfg(target_os = "windows")]
-const WINDOWS_TERMINALS: &[(&str, &str)] = &[
-    ("wt", "wt.exe"),
-    ("pwsh", "pwsh.exe"),
-    ("cmd", "cmd.exe"),
-];
+const WINDOWS_TERMINALS: &[(&str, &str)] =
+    &[("wt", "wt.exe"), ("pwsh", "pwsh.exe"), ("cmd", "cmd.exe")];
 
 #[cfg(target_os = "macos")]
 fn mac_app_path(name: &str) -> Option<PathBuf> {
@@ -297,7 +294,14 @@ pub fn kubeconfig_open_terminal(
         requested
     };
 
-    spawn_terminal(&store_dir, &project, &name, &kubeconfig_path, &term_id, &cache)?;
+    spawn_terminal(
+        &store_dir,
+        &project,
+        &name,
+        &kubeconfig_path,
+        &term_id,
+        &cache,
+    )?;
     Ok(term_id)
 }
 
@@ -416,12 +420,21 @@ fn spawn_terminal(
         }
         "pwsh" => {
             let mut c = Command::new("cmd");
-            c.arg("/c").arg("start").arg("pwsh").arg("-NoExit").arg("-File").arg(&script_str);
+            c.arg("/c")
+                .arg("start")
+                .arg("pwsh")
+                .arg("-NoExit")
+                .arg("-File")
+                .arg(&script_str);
             c
         }
         _ => {
             let mut c = Command::new("cmd");
-            c.arg("/c").arg("start").arg("cmd").arg("/k").arg(&script_str);
+            c.arg("/c")
+                .arg("start")
+                .arg("cmd")
+                .arg("/k")
+                .arg(&script_str);
             c
         }
     };

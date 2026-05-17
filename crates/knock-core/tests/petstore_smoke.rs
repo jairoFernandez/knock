@@ -35,10 +35,7 @@ fn petstore3_parses_with_refs_and_responses() {
         get_by_id.path_params.contains_key("petId"),
         "path param petId captured"
     );
-    let r200 = get_by_id
-        .responses
-        .get("200")
-        .expect("getPetById has 200");
+    let r200 = get_by_id.responses.get("200").expect("getPetById has 200");
     assert!(r200.example.is_some(), "200 example resolved from schema");
 
     // Metadata: findPetsByStatus has status param with enum

@@ -339,13 +339,44 @@ fn walk_all(base: &Path, dir: &Path, out: &mut Vec<FileEntry>) -> std::io::Resul
 }
 
 fn looks_text(path: &Path) -> bool {
-    match path.extension().and_then(|s| s.to_str()).map(str::to_lowercase) {
+    match path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_lowercase)
+    {
         Some(ext) => matches!(
             ext.as_str(),
-            "toml" | "json" | "md" | "txt" | "yaml" | "yml" | "ini" | "cfg" | "conf"
-                | "log" | "csv" | "xml" | "html" | "css" | "js" | "ts" | "tsx" | "jsx"
-                | "sh" | "rs" | "go" | "py" | "rb" | "java" | "kt" | "swift" | "sql"
-                | "env" | "gitignore" | "gitattributes" | "editorconfig"
+            "toml"
+                | "json"
+                | "md"
+                | "txt"
+                | "yaml"
+                | "yml"
+                | "ini"
+                | "cfg"
+                | "conf"
+                | "log"
+                | "csv"
+                | "xml"
+                | "html"
+                | "css"
+                | "js"
+                | "ts"
+                | "tsx"
+                | "jsx"
+                | "sh"
+                | "rs"
+                | "go"
+                | "py"
+                | "rb"
+                | "java"
+                | "kt"
+                | "swift"
+                | "sql"
+                | "env"
+                | "gitignore"
+                | "gitattributes"
+                | "editorconfig"
         ),
         None => {
             // files without extension: try to peek
@@ -398,10 +429,7 @@ pub fn git_log(root: String, limit: Option<u32>) -> Result<Vec<CommitDto>, Strin
     }
     let limit = limit.unwrap_or(40).min(500);
     let fmt = "--pretty=format:%H%x09%h%x09%an%x09%at%x09%s";
-    let out = run_git(
-        &root,
-        &["log", &format!("-n{limit}"), fmt],
-    )?;
+    let out = run_git(&root, &["log", &format!("-n{limit}"), fmt])?;
     let mut commits = Vec::new();
     for line in out.lines() {
         let mut parts = line.splitn(5, '\t');
@@ -411,7 +439,13 @@ pub fn git_log(root: String, limit: Option<u32>) -> Result<Vec<CommitDto>, Strin
         let date = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
         let subject = parts.next().unwrap_or("").to_string();
         if !hash.is_empty() {
-            commits.push(CommitDto { hash, short, author, date, subject });
+            commits.push(CommitDto {
+                hash,
+                short,
+                author,
+                date,
+                subject,
+            });
         }
     }
     Ok(commits)
@@ -419,10 +453,7 @@ pub fn git_log(root: String, limit: Option<u32>) -> Result<Vec<CommitDto>, Strin
 
 #[tauri::command]
 pub fn git_show_files(root: String, hash: String) -> Result<Vec<FileChangeDto>, String> {
-    let out = run_git(
-        &root,
-        &["show", "--name-status", "--pretty=", &hash],
-    )?;
+    let out = run_git(&root, &["show", "--name-status", "--pretty=", &hash])?;
     let mut changes = Vec::new();
     for line in out.lines() {
         let mut parts = line.split('\t');
@@ -511,15 +542,18 @@ pub fn git_state(root: String) -> Result<GitStateDto, String> {
     .filter(|s| !s.is_empty());
 
     let (ahead, behind) = if upstream.is_some() {
-        run_git(&root, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])
-            .ok()
-            .and_then(|s| {
-                let mut parts = s.split_whitespace();
-                let behind = parts.next()?.parse::<u32>().ok()?;
-                let ahead = parts.next()?.parse::<u32>().ok()?;
-                Some((ahead, behind))
-            })
-            .unwrap_or((0, 0))
+        run_git(
+            &root,
+            &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        )
+        .ok()
+        .and_then(|s| {
+            let mut parts = s.split_whitespace();
+            let behind = parts.next()?.parse::<u32>().ok()?;
+            let ahead = parts.next()?.parse::<u32>().ok()?;
+            Some((ahead, behind))
+        })
+        .unwrap_or((0, 0))
     } else {
         (0, 0)
     };
@@ -619,7 +653,10 @@ pub fn git_add_remote(root: String, name: String, url: String) -> Result<(), Str
     if url.is_empty() {
         return Err("remote url cannot be empty".into());
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
         return Err("remote name contains invalid characters".into());
     }
     run_git(&root, &["remote", "add", name, url]).map(|_| ())
@@ -1084,7 +1121,9 @@ pub fn set_workspace_appearance(
     let cfg_path = PathBuf::from(&root).join("knock.toml");
     let raw = std::fs::read_to_string(&cfg_path).map_err(to_err)?;
     let mut doc: toml::Value = raw.parse().map_err(to_err)?;
-    let table = doc.as_table_mut().ok_or_else(|| "knock.toml is not a table".to_string())?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| "knock.toml is not a table".to_string())?;
     match color {
         Some(c) if !c.trim().is_empty() => {
             table.insert("color".into(), toml::Value::String(c));
@@ -1240,10 +1279,8 @@ fn walk(base: &Path, dir: &Path, files: &mut Vec<String>) -> std::io::Result<()>
             }
             walk(base, &path, files)?;
         } else if path.is_file() {
-            let is_spec = matches!(
-                name_str.as_str(),
-                "spec.json" | "spec.yaml"
-            ) && dir.file_name().and_then(|n| n.to_str()) == Some("openapi");
+            let is_spec = matches!(name_str.as_str(), "spec.json" | "spec.yaml")
+                && dir.file_name().and_then(|n| n.to_str()) == Some("openapi");
             if name_str.ends_with(".toml") || is_spec {
                 if let Ok(rel) = path.strip_prefix(base) {
                     files.push(rel.to_string_lossy().replace('\\', "/"));
@@ -1500,8 +1537,8 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
             multipart: None,
         }),
         BodyDto::Json { json } => {
-            let value: serde_json::Value = serde_json::from_str(json)
-                .map_err(|e| format!("body.json: invalid JSON: {e}"))?;
+            let value: serde_json::Value =
+                serde_json::from_str(json).map_err(|e| format!("body.json: invalid JSON: {e}"))?;
             let toml_val = json_to_toml(&value);
             Some(TomlBody {
                 text: None,
@@ -1537,7 +1574,11 @@ fn emit_request_toml(form: &RequestFormDto) -> Result<String, String> {
                     .map(|f| TomlMultipartField {
                         name: f.name.as_str(),
                         value: f.value.as_str(),
-                        kind: if f.kind.is_empty() { "text" } else { f.kind.as_str() },
+                        kind: if f.kind.is_empty() {
+                            "text"
+                        } else {
+                            f.kind.as_str()
+                        },
                     })
                     .collect(),
             ),
@@ -1632,9 +1673,7 @@ fn json_to_toml(v: &serde_json::Value) -> toml::Value {
             }
         }
         serde_json::Value::String(s) => toml::Value::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            toml::Value::Array(arr.iter().map(json_to_toml).collect())
-        }
+        serde_json::Value::Array(arr) => toml::Value::Array(arr.iter().map(json_to_toml).collect()),
         serde_json::Value::Object(obj) => {
             let mut table = toml::value::Table::new();
             for (k, v) in obj {
@@ -1673,10 +1712,8 @@ pub async fn run_request(
         .or(workspace.config.default_env.clone());
     let resolved = resolve(&workspace, &path, env_name.as_deref()).map_err(to_err)?;
     let response = execute(&resolved).await.map_err(to_err)?;
-    let body_base64 = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        &response.body,
-    );
+    let body_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &response.body);
     let dto = ResponseDto {
         status: response.status,
         url: resolved.url,
@@ -1693,7 +1730,10 @@ const HISTORY_CAP: usize = 50;
 
 fn history_path(workspace: &Workspace, rel: &str) -> PathBuf {
     let safe = rel.replace(['/', '\\'], "__");
-    workspace.state_dir().join("history").join(format!("{safe}.jsonl"))
+    workspace
+        .state_dir()
+        .join("history")
+        .join(format!("{safe}.jsonl"))
 }
 
 fn append_history(workspace: &Workspace, rel: &str, dto: &ResponseDto) -> std::io::Result<()> {
@@ -1705,7 +1745,10 @@ fn append_history(workspace: &Workspace, rel: &str, dto: &ResponseDto) -> std::i
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    let entry = HistoryEntryDto { at: now, response: dto.clone() };
+    let entry = HistoryEntryDto {
+        at: now,
+        response: dto.clone(),
+    };
     let mut lines: Vec<String> = std::fs::read_to_string(&path)
         .ok()
         .map(|s| s.lines().map(|l| l.to_string()).collect())
@@ -1928,15 +1971,13 @@ fn safe_join(root: &str, rel: &str) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|e| format!("invalid workspace root: {e}"))?;
     let candidate = root_path.join(rel);
-    let canonical = candidate
-        .canonicalize()
-        .or_else(|_| {
-            candidate
-                .parent()
-                .ok_or_else(|| "invalid path".to_string())
-                .and_then(|p| p.canonicalize().map_err(to_err))
-                .map(|p| p.join(candidate.file_name().unwrap_or_default()))
-        })?;
+    let canonical = candidate.canonicalize().or_else(|_| {
+        candidate
+            .parent()
+            .ok_or_else(|| "invalid path".to_string())
+            .and_then(|p| p.canonicalize().map_err(to_err))
+            .map(|p| p.join(candidate.file_name().unwrap_or_default()))
+    })?;
     if !canonical.starts_with(&root_path) {
         return Err(format!("path '{rel}' escapes workspace"));
     }
@@ -1975,9 +2016,7 @@ pub fn get_system_stats() -> Result<SystemStats, String> {
         sys.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[pid]),
             true,
-            sysinfo::ProcessRefreshKind::new()
-                .with_cpu()
-                .with_memory(),
+            sysinfo::ProcessRefreshKind::new().with_cpu().with_memory(),
         );
     }
     let cpu_percent = sys.global_cpu_usage();

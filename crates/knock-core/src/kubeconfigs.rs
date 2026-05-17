@@ -232,7 +232,10 @@ pub fn add(
     };
 
     if (target.exists() || other.exists()) && !overwrite {
-        return Err(KubeError::AlreadyExists(name.to_string(), project.to_string()));
+        return Err(KubeError::AlreadyExists(
+            name.to_string(),
+            project.to_string(),
+        ));
     }
 
     let bytes = if let Some(pass) = passphrase {
@@ -325,7 +328,11 @@ fn decrypt_blob(name: &str, raw: &[u8], passphrase: &str) -> Result<Vec<u8>, Kub
         .map_err(|_| KubeError::Decrypt)
 }
 
-fn collect_entries(pdir: &Path, project: &str, out: &mut Vec<KubeEntryMeta>) -> Result<(), KubeError> {
+fn collect_entries(
+    pdir: &Path,
+    project: &str,
+    out: &mut Vec<KubeEntryMeta>,
+) -> Result<(), KubeError> {
     for entry in fs::read_dir(pdir)? {
         let entry = entry?;
         let path = entry.path();

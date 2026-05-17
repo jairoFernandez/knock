@@ -35,9 +35,18 @@ fn read_workspace_meta(root: &str) -> (Option<String>, Option<String>, Option<St
     let Ok(value): Result<toml::Value, _> = toml::from_str(&raw) else {
         return (None, None, None);
     };
-    let name = value.get("name").and_then(|v| v.as_str()).map(str::to_string);
-    let color = value.get("color").and_then(|v| v.as_str()).map(str::to_string);
-    let icon = value.get("icon").and_then(|v| v.as_str()).map(str::to_string);
+    let name = value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let color = value
+        .get("color")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let icon = value
+        .get("icon")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     (name, color, icon)
 }
 

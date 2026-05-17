@@ -107,9 +107,7 @@ pub fn openapi_preview_import(
 ) -> Result<OpenApiPreviewDto, String> {
     let root_path = PathBuf::from(&root);
     let spec = openapi::parse_spec(&bytes).map_err(to_err)?;
-    let spec_text = std::str::from_utf8(&bytes)
-        .map_err(to_err)?
-        .to_string();
+    let spec_text = std::str::from_utf8(&bytes).map_err(to_err)?.to_string();
     let spec_ext = detect_ext(&spec_text);
 
     let meta = read_meta(&root_path).unwrap_or_default();
@@ -132,10 +130,8 @@ pub fn openapi_preview_import(
         let (status, existing_was_manually_edited) = if !existing_file_exists {
             ("new", false)
         } else {
-            let raw =
-                std::fs::read_to_string(&existing_path).unwrap_or_default();
-            let current_hash =
-                openapi::generated_hash(&strip_openapi_section(&raw));
+            let raw = std::fs::read_to_string(&existing_path).unwrap_or_default();
+            let current_hash = openapi::generated_hash(&strip_openapi_section(&raw));
             let expected_hash = existing_meta_op
                 .map(|s| s.generated_hash.clone())
                 .unwrap_or_default();
@@ -201,9 +197,7 @@ pub fn openapi_apply_import(
         .canonicalize()
         .map_err(|e| format!("invalid workspace root: {e}"))?;
     let spec = openapi::parse_spec(&bytes).map_err(to_err)?;
-    let spec_text = std::str::from_utf8(&bytes)
-        .map_err(to_err)?
-        .to_string();
+    let spec_text = std::str::from_utf8(&bytes).map_err(to_err)?.to_string();
     let spec_ext = detect_ext(&spec_text);
     let spec_rel = if spec_ext == "yaml" {
         SPEC_FILE_YAML
@@ -220,10 +214,13 @@ pub fn openapi_apply_import(
     let mut new_operations: indexmap::IndexMap<String, StoredOperation> = indexmap::IndexMap::new();
     if let Some(m) = existing_meta.as_ref() {
         for (k, v) in &m.operations {
-            new_operations.insert(k.clone(), StoredOperation {
-                rel: v.rel.clone(),
-                generated_hash: v.generated_hash.clone(),
-            });
+            new_operations.insert(
+                k.clone(),
+                StoredOperation {
+                    rel: v.rel.clone(),
+                    generated_hash: v.generated_hash.clone(),
+                },
+            );
         }
     }
 
@@ -267,7 +264,9 @@ pub fn openapi_apply_import(
                 }
             }
             "create" | "overwrite" => {
-                let Some(op) = op_lookup.get(op_id) else { continue };
+                let Some(op) = op_lookup.get(op_id) else {
+                    continue;
+                };
                 let form = operation_to_request_form(op, &spec);
                 let target_rel = target_rel_for(op);
                 let toml_no_mark = emit_request_toml_pub(&form)?;
@@ -634,11 +633,7 @@ fn resolve_base_url(spec_base: Option<&str>, source_url: Option<&str>) -> Option
     if base.is_empty() {
         if let Some(src) = source_url {
             if let Ok(u) = url::Url::parse(src) {
-                let origin = format!(
-                    "{}://{}",
-                    u.scheme(),
-                    u.host_str().unwrap_or("")
-                );
+                let origin = format!("{}://{}", u.scheme(), u.host_str().unwrap_or(""));
                 if u.host_str().is_some() {
                     return Some(origin);
                 }

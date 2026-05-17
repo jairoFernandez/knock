@@ -131,7 +131,9 @@ fn sweep_stale_tmp_files() {
         if !meta.is_file() {
             continue;
         }
-        let Ok(modified) = meta.modified() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if now.duration_since(modified).unwrap_or(Duration::ZERO) > cutoff {
             let _ = std::fs::remove_file(entry.path());
         }
