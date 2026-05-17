@@ -95,15 +95,50 @@ On macOS, after extracting:
 xattr -dr com.apple.quarantine ./knock
 ```
 
-### Desktop app
+### Desktop app — Quick install (Linux / macOS)
+
+One-liner. Resolves latest release, downloads the right asset for your OS/arch, installs it, and (after confirming) strips macOS Gatekeeper quarantine.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install-app.sh | bash
+```
+
+Pin a version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install-app.sh | bash -s -- --version v0.1.0
+```
+
+Linux: defaults to `.AppImage`. Switch to `.deb` or `.rpm` (require sudo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install-app.sh | KNOCK_APP_FORMAT=deb bash
+```
+
+### Desktop app — Quick install (Windows)
+
+PowerShell. Downloads `.msi` and runs it.
+
+```powershell
+iwr https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install-app.ps1 | iex
+```
+
+Silent install:
+
+```powershell
+$env:KNOCK_SILENT = "1"
+iwr https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install-app.ps1 | iex
+```
+
+### Desktop app — Manual download
 
 Download the installer for your platform from [Releases](https://github.com/jairoFernandez/knock/releases):
 
-- macOS: `.dmg` (x86_64 + aarch64)
-- Linux: `.AppImage` / `.deb` (x86_64)
-- Windows: `.msi` / `.exe` (x86_64)
+- macOS: `Knock_<version>_aarch64.dmg` / `Knock_<version>_x64.dmg`
+- Linux: `.AppImage` / `.deb` / `.rpm` (x86_64)
+- Windows: `.msi` / `setup.exe` (x86_64)
 
-macOS unsigned bundle:
+macOS unsigned bundle — bypass Gatekeeper:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Knock.app"
