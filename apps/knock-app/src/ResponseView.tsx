@@ -55,6 +55,50 @@ function isImage(ct: string): boolean {
   return bareContentType(ct).startsWith("image/");
 }
 
+function useCopy(): { copy: (text: string) => void; copied: boolean } {
+  const [copied, setCopied] = useState(false);
+  function copy(text: string) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {
+        /* clipboard blocked */
+      });
+  }
+  return { copy, copied };
+}
+
+function CopyButton({
+  text,
+  label = "Copy",
+  title,
+  compact = false,
+}: {
+  text: string | (() => string);
+  label?: string;
+  title?: string;
+  compact?: boolean;
+}) {
+  const { copy, copied } = useCopy();
+  return (
+    <button
+      type="button"
+      onClick={() => copy(typeof text === "function" ? text() : text)}
+      title={title ?? "Copy to clipboard"}
+      className="resp-copy-btn"
+      style={{
+        fontSize: compact ? 10 : 11,
+        padding: compact ? "2px 6px" : "3px 8px",
+      }}
+    >
+      {copied ? "Copied!" : label}
+    </button>
+  );
+}
+
 function isText(ct: string): boolean {
   const bare = bareContentType(ct);
   return (
@@ -83,6 +127,7 @@ export function ResponseView({
     [response],
   );
   const size = useMemo(() => byteSize(response.bodyBase64), [response.bodyBase64]);
+  const bodyText = useMemo(() => decodeUtf8(response.bodyBase64), [response.bodyBase64]);
 
   return (
     <div className="response-view">
@@ -94,6 +139,20 @@ export function ResponseView({
           {activeAt !== null && history.length > 1 && (
             <span className="resp-when"> · {timeAgo(activeAt)}</span>
           )}
+        </span>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          <CopyButton
+            text={() => bodyText}
+            label="Copy body"
+            title="Copy response body as text"
+            compact
+          />
+          <CopyButton
+            text={() => formatAll(response, bodyText)}
+            label="Copy all"
+            title="Copy status, headers, body"
+            compact
+          />
         </span>
       </div>
 
@@ -276,6 +335,12 @@ function JsonBody({ value }: { value: unknown }) {
             Pretty
           </button>
         </div>
+        <CopyButton
+          text={() => JSON.stringify(display, null, 2)}
+          label="Copy JSON"
+          title={selected.isFiltered ? "Copy filtered JSON" : "Copy JSON"}
+          compact
+        />
       </div>
       {selErr && <div className="json-sel-err">{selErr}</div>}
       {selected.isFiltered && Array.isArray(display) && display.length === 0 && (
@@ -298,12 +363,17 @@ function JsonBody({ value }: { value: unknown }) {
 }
 
 function HeadersPane({ response }: { response: ResponseDto }) {
+  const headerText = response.headers.map(([k, v]) => `${k}: ${v}`).join("\n");
   return (
     <div className="resp-headers">
+      <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px" }}>
+        <CopyButton text={headerText} label="Copy headers" compact />
+      </div>
       {response.headers.map(([k, v], i) => (
         <div className="resp-header-row" key={i}>
           <span className="resp-header-key">{k}</span>
           <span className="resp-header-value">{v}</span>
+          <CopyButton text={v} label="⧉" title={`Copy "${k}"`} compact />
         </div>
       ))}
     </div>
@@ -337,6 +407,13 @@ function InfoPane({
       ))}
     </div>
   );
+}
+
+function formatAll(response: ResponseDto, bodyText: string): string {
+  const headerLines = response.headers
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+  return `${response.method} ${response.url}\n${response.status} ${statusText(response.status)}\n${headerLines}\n\n${bodyText}`;
 }
 
 function byteSize(b64: string): string {

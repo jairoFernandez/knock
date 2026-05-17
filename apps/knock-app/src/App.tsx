@@ -511,8 +511,8 @@ export function App() {
   const appStyle: React.CSSProperties = {
     gridTemplateColumns:
       globalMode === "kube"
-        ? `44px minmax(0, 1fr)${toolsCols}`
-        : `44px 44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
+        ? `minmax(0, 1fr)${toolsCols}`
+        : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
   if (workspace.color) {
     (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
@@ -725,7 +725,6 @@ export function App() {
         <WindowControls />
       </div>
 
-      <GlobalRail mode={globalMode} onChange={setGlobalMode} />
       {globalMode === "requests" && (
         <ProjectRail mode={projectMode} onChange={setProjectMode} />
       )}
