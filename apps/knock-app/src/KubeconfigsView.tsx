@@ -4,8 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { KubeconfigEditor } from "./KubeconfigEditor";
 import { highlightYaml } from "./yamlHighlight";
 import { lazy, Suspense } from "react";
-const KubeTerminal = lazy(() =>
-  import("./KubeTerminal").then((m) => ({ default: m.KubeTerminal })),
+const KubeTerminalsPane = lazy(() =>
+  import("./KubeTerminalsPane").then((m) => ({ default: m.KubeTerminalsPane })),
 );
 
 const DEFAULT_PROJECT = "default";
@@ -329,32 +329,16 @@ function UsePanel({
   const encrypted = entry?.encrypted ?? true;
   const [pass, setPass] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
-  const [termSessions, setTermSessions] = useState<string[]>([]);
-  const [activeTermIdx, setActiveTermIdx] = useState(0);
 
   useEffect(() => {
     setPass("");
     setRevealed(null);
-    setTermSessions([]);
-    setActiveTermIdx(0);
   }, [name, project]);
 
   const canEmbed = !encrypted || !!pass;
-  function addTermSession() {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setTermSessions((prev) => {
-      const next = [...prev, id];
-      setActiveTermIdx(next.length - 1);
-      return next;
-    });
-  }
-  function closeTermSession(idx: number) {
-    setTermSessions((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
-      setActiveTermIdx((cur) => Math.max(0, Math.min(cur, next.length - 1)));
-      return next;
-    });
-  }
+  const spawnArgs = canEmbed
+    ? { name, project, encrypted, passphrase: encrypted ? pass : null }
+    : null;
 
   async function callWith<T>(fn: (passphrase: string | undefined) => Promise<T>): Promise<T | null> {
     if (encrypted && !pass) {
@@ -502,55 +486,14 @@ function UsePanel({
 
       <div className="kube-section kube-section-grow">
         <div className="kube-section-header">
-          <div className="kube-section-title">Embedded terminal</div>
-          <div className="kube-actions">
-            {termSessions.length > 0 && (
-              <>
-                {termSessions.map((sid, i) => (
-                  <button
-                    key={sid}
-                    className={i === activeTermIdx ? "primary" : ""}
-                    onClick={() => setActiveTermIdx(i)}
-                    title={`Session ${i + 1}`}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-                <button onClick={() => closeTermSession(activeTermIdx)} title="Close current">
-                  −
-                </button>
-              </>
-            )}
-            <button onClick={addTermSession} disabled={!canEmbed} title="New session">
-              + Shell
-            </button>
-          </div>
+          <div className="kube-section-title">Embedded terminals</div>
+          {encrypted && !pass && (
+            <div className="kube-subtle">Enter passphrase above to start new sessions.</div>
+          )}
         </div>
-        {!canEmbed && (
-          <div className="kube-empty">
-            {encrypted
-              ? "Enter passphrase above, then click + Shell."
-              : "Click + Shell to open a session."}
-          </div>
-        )}
-        {canEmbed && termSessions.length === 0 && (
-          <div className="kube-empty">No sessions. Click + Shell to start one.</div>
-        )}
-        {termSessions.map((sid, i) => (
-          <div
-            key={sid}
-            className="kube-term-host"
-            style={{ display: i === activeTermIdx ? "flex" : "none" }}
-          >
-            <Suspense fallback={<div className="kube-empty">Loading terminal…</div>}>
-              <KubeTerminal
-                name={name}
-                project={project}
-                passphrase={encrypted ? pass : null}
-              />
-            </Suspense>
-          </div>
-        ))}
+        <Suspense fallback={<div className="kube-empty">Loading terminals…</div>}>
+          <KubeTerminalsPane spawnArgs={spawnArgs} />
+        </Suspense>
       </div>
     </section>
   );
