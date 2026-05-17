@@ -17,7 +17,7 @@ crates/knock-core Shared core library
 
 ### Quick install (Linux / macOS — CLI)
 
-One-liner. Downloads the latest release for your OS/arch, places `knock` in `~/.local/bin`, and strips the macOS Gatekeeper quarantine attribute so the unsigned binary can run.
+One-liner. Downloads the latest release for your OS/arch, places `knock` in `~/.local/bin`, and (after confirming) strips the macOS Gatekeeper quarantine attribute so the unsigned binary can run.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install.sh | bash
@@ -40,6 +40,23 @@ If `~/.local/bin` is not in your `PATH`, add it:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+### Quick install (Windows — CLI)
+
+PowerShell. Installs to `%LOCALAPPDATA%\Knock\bin` and adds it to user PATH.
+
+```powershell
+iwr https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install.ps1 | iex
+```
+
+Pin a version:
+
+```powershell
+$env:KNOCK_VERSION = "v0.1.0"
+iwr https://raw.githubusercontent.com/jairoFernandez/knock/main/scripts/install.ps1 | iex
+```
+
+Open a new terminal after install for the PATH update to apply.
 
 The installer verifies the asset's SHA256 against the `.sha256` sidecar published by the release workflow. If the file is missing or the hash does not match, installation aborts. Pin manually:
 
