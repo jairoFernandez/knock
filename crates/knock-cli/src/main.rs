@@ -62,27 +62,54 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum KubeCmd {
-    /// Add a kubeconfig from a file (encrypts with a passphrase)
+    /// Add a kubeconfig from a file
     Add {
         /// Logical name (A-Z a-z 0-9 . _ -)
         name: String,
         /// Path to existing kubeconfig YAML
         #[arg(long, short)]
         file: PathBuf,
+        /// Project to store under (default: "default")
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Store unencrypted (no passphrase)
+        #[arg(long)]
+        no_encrypt: bool,
         /// Overwrite if it already exists
         #[arg(long)]
         force: bool,
     },
-    /// List stored kubeconfigs
-    List,
+    /// List stored kubeconfigs (optionally filtered by project)
+    List {
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    /// List projects
+    Projects,
     /// Remove a stored kubeconfig
-    Rm { name: String },
-    /// Decrypt and print kubeconfig to stdout
-    Cat { name: String },
-    /// Decrypt to a temp file (0600) and print its path
-    Export { name: String },
-    /// Decrypt to a temp file and print `export KUBECONFIG=...` for eval
-    Shell { name: String },
+    Rm {
+        name: String,
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    /// Print kubeconfig contents to stdout (decrypts if needed)
+    Cat {
+        name: String,
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    /// Write to a temp file (0600) and print its path
+    Export {
+        name: String,
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+    /// Print `export KUBECONFIG=...` for eval
+    Shell {
+        name: String,
+        #[arg(long, short)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -128,58 +155,107 @@ fn prompt_passphrase(confirm: bool) -> Result<String> {
     Ok(p)
 }
 
+fn project_or_default(p: Option<String>) -> String {
+    p.filter(|s| !s.is_empty())
+        .unwrap_or_else(|| knock_core::kubeconfigs::DEFAULT_PROJECT.to_string())
+}
+
 fn kube(action: KubeCmd) -> Result<()> {
     let dir = kube_store_dir()?;
     match action {
-        KubeCmd::Add { name, file, force } => {
+        KubeCmd::Add {
+            name,
+            file,
+            project,
+            no_encrypt,
+            force,
+        } => {
             let data = std::fs::read(&file)
                 .with_context(|| format!("reading {}", file.display()))?;
-            let pass = prompt_passphrase(true)?;
-            let meta = kubeconfigs::add(&dir, &name, &data, &pass, force)?;
+            let project = project_or_default(project);
+            let pass = if no_encrypt {
+                None
+            } else {
+                Some(prompt_passphrase(true)?)
+            };
+            let meta = kubeconfigs::add(&dir, &project, &name, &data, pass.as_deref(), force)?;
+            let label = if meta.encrypted { "encrypted" } else { "plaintext" };
             println!(
-                "Stored kubeconfig '{}' ({} bytes encrypted) at {}",
+                "Stored kubeconfig '{}' ({}) in project '{}' — {} bytes at {}",
                 meta.name,
+                label,
+                meta.project,
                 meta.size_bytes,
                 dir.display()
             );
             Ok(())
         }
-        KubeCmd::List => {
+        KubeCmd::List { project } => {
             let items = kubeconfigs::list(&dir)?;
-            if items.is_empty() {
+            let filter = project.as_deref();
+            let filtered: Vec<_> = items
+                .into_iter()
+                .filter(|m| filter.map(|p| p == m.project).unwrap_or(true))
+                .collect();
+            if filtered.is_empty() {
                 println!("(no kubeconfigs in {})", dir.display());
                 return Ok(());
             }
-            for m in items {
-                println!("{}  ({} bytes)", m.name, m.size_bytes);
+            let mut current_proj: Option<String> = None;
+            for m in filtered {
+                if current_proj.as_deref() != Some(m.project.as_str()) {
+                    println!("[{}]", m.project);
+                    current_proj = Some(m.project.clone());
+                }
+                let mark = if m.encrypted { "🔒" } else { "  " };
+                println!("  {mark} {}  ({} bytes)", m.name, m.size_bytes);
             }
             Ok(())
         }
-        KubeCmd::Rm { name } => {
-            kubeconfigs::remove(&dir, &name)?;
-            println!("Removed '{name}'");
+        KubeCmd::Projects => {
+            let projects = kubeconfigs::list_projects(&dir)?;
+            for p in projects {
+                println!("{p}");
+            }
             Ok(())
         }
-        KubeCmd::Cat { name } => {
-            let pass = prompt_passphrase(false)?;
-            let data = kubeconfigs::get(&dir, &name, &pass)?;
+        KubeCmd::Rm { name, project } => {
+            let project = project_or_default(project);
+            kubeconfigs::remove(&dir, &project, &name)?;
+            println!("Removed '{name}' from project '{project}'");
+            Ok(())
+        }
+        KubeCmd::Cat { name, project } => {
+            let project = project_or_default(project);
+            let pass = passphrase_if_encrypted(&dir, &project, &name)?;
+            let data = kubeconfigs::get(&dir, &project, &name, pass.as_deref())?;
             use std::io::Write;
             std::io::stdout().write_all(&data)?;
             Ok(())
         }
-        KubeCmd::Export { name } => {
-            let pass = prompt_passphrase(false)?;
-            let path = kubeconfigs::export_temp(&dir, &name, &pass)?;
+        KubeCmd::Export { name, project } => {
+            let project = project_or_default(project);
+            let pass = passphrase_if_encrypted(&dir, &project, &name)?;
+            let path = kubeconfigs::export_temp(&dir, &project, &name, pass.as_deref())?;
             println!("{}", path.display());
             Ok(())
         }
-        KubeCmd::Shell { name } => {
-            let pass = prompt_passphrase(false)?;
-            let path = kubeconfigs::export_temp(&dir, &name, &pass)?;
+        KubeCmd::Shell { name, project } => {
+            let project = project_or_default(project);
+            let pass = passphrase_if_encrypted(&dir, &project, &name)?;
+            let path = kubeconfigs::export_temp(&dir, &project, &name, pass.as_deref())?;
             println!("export KUBECONFIG={}", shell_quote(&path.to_string_lossy()));
             eprintln!("# eval \"$(knock kube shell {name})\"");
             Ok(())
         }
+    }
+}
+
+fn passphrase_if_encrypted(dir: &PathBuf, project: &str, name: &str) -> Result<Option<String>> {
+    if kubeconfigs::is_encrypted(dir, project, name)? {
+        Ok(Some(prompt_passphrase(false)?))
+    } else {
+        Ok(None)
     }
 }
 

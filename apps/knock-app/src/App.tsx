@@ -11,8 +11,6 @@ import { Dashboard } from "./Dashboard";
 import { Rail, type RailMode } from "./Rail";
 import { KubeconfigsView } from "./KubeconfigsView";
 import { WindowControls, detectIsMac } from "./WindowControls";
-import { FileBrowser } from "./FileBrowser";
-import { GitPanel } from "./GitPanel";
 import { Splitter } from "./Splitter";
 import { usePersistedNumber, usePersistedString, useConfirm } from "./hooks";
 import { ToolsRail } from "./ToolsRail";
@@ -108,7 +106,7 @@ export function App() {
   const [newEntryPath, setNewEntryPath] = useState<string>("");
   const [railMode, setRailMode] = useState<RailMode>("workspace");
   const isMacPlatform = useMemo(() => detectIsMac(), []);
-  const [filesRefreshToken, setFilesRefreshToken] = useState(0);
+  const [, setFilesRefreshToken] = useState(0);
   const [directories, setDirectories] = useState<string[]>([]);
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
@@ -956,35 +954,12 @@ export function App() {
             )}
           </>
         )}
-        {railMode === "files" && workspace && (
-          <>
-            <div className="panel-header">Files</div>
-            <FileBrowser
-              root={workspace.root}
-              selected={selected}
-              onSelect={setSelected}
-              refreshToken={filesRefreshToken}
-            />
-          </>
-        )}
         {railMode === "kube" && (
           <>
             <div className="panel-header">Kubeconfigs</div>
             <div className="kube-sidebar-hint">
               Encrypted with a passphrase (Argon2id + AES-256-GCM). Stored locally per user.
             </div>
-          </>
-        )}
-        {railMode === "git" && workspace && (
-          <>
-            <div className="panel-header">Git</div>
-            <GitPanel
-              root={workspace.root}
-              onOpenFile={(rel) => {
-                setSelected(rel);
-                setRailMode("files");
-              }}
-            />
           </>
         )}
       </div>
