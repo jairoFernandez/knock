@@ -67,14 +67,13 @@ fi
 if [ -z "$VERSION" ]; then
   log "Resolving latest release for $REPO"
   if command -v curl >/dev/null 2>&1; then
-    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+    LATEST_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
   elif command -v wget >/dev/null 2>&1; then
-    VERSION="$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+    LATEST_JSON="$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest")"
   else
     err "need curl or wget"
   fi
+  VERSION="$(printf '%s' "$LATEST_JSON" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
   [ -n "$VERSION" ] || err "could not resolve latest version"
 fi
 

@@ -74,8 +74,8 @@ api_get() {
 
 if [ -z "$VERSION" ]; then
   log "Resolving latest release for $REPO"
-  VERSION="$(api_get "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+  LATEST_JSON="$(api_get "https://api.github.com/repos/${REPO}/releases/latest")"
+  VERSION="$(printf '%s' "$LATEST_JSON" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
   [ -n "$VERSION" ] || err "could not resolve latest version"
 fi
 
