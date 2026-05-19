@@ -716,7 +716,7 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
   }
 
   return (
-    <div style={{ padding: 4, display: "flex", flexDirection: "column" }}>
+    <div className="param-list">
       {specNames.map((name) => {
         const spec = byName.get(name)!;
         const value = rowsByName.get(name) ?? spec.default ?? spec.example ?? "";
@@ -753,18 +753,8 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
         })();
         const invalid = !numericValid || !lengthValid || !patternValid;
         return (
-          <div
-            key={name}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "200px 1fr",
-              gap: 12,
-              padding: "8px 8px",
-              borderBottom: "1px solid var(--border)",
-              alignItems: "start",
-            }}
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div key={name} className="param-row">
+            <div className="param-meta">
               <div
                 style={{
                   fontFamily: "var(--mono)",
@@ -805,12 +795,12 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
                 <span style={{ opacity: 0.6 }}>({spec.location})</span>
               </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div className="param-controls">
               {hasEnum ? (
                 <select
+                  className="param-input param-select"
                   value={value}
                   onChange={(e) => setValue(name, e.target.value)}
-                  style={{ fontFamily: "var(--mono)", fontSize: 12 }}
                 >
                   <option value="">(unset)</option>
                   {spec.enumValues!.map((v) => (
@@ -821,6 +811,7 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
                 </select>
               ) : (
                 <input
+                  className="param-input"
                   type="text"
                   value={value}
                   placeholder={spec.example ?? spec.default ?? ""}
@@ -854,29 +845,14 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
       })}
 
       {extras.length > 0 && (
-        <div
-          style={{
-            padding: "6px 8px",
-            fontSize: 11,
-            color: "var(--text-dim)",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
+        <div className="param-extra-title">
           Extra (not in spec)
         </div>
       )}
       {extras.map((kv, i) => (
-        <div
-          key={`extra-${i}`}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "200px 1fr 24px",
-            gap: 12,
-            padding: "6px 8px",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
+        <div key={`extra-${i}`} className="param-extra-row">
           <input
+            className="param-input"
             type="text"
             value={kv.key}
             placeholder={keyPlaceholder}
@@ -885,17 +861,22 @@ function ParamList({ rows, specs, vars, keyPlaceholder, onChange }: ParamListPro
             style={{ fontFamily: "var(--mono)", fontSize: 12 }}
           />
           <input
+            className="param-input"
             type="text"
             value={kv.value}
             onChange={(e) => setExtra(kv, { ...kv, value: e.target.value })}
             spellCheck={false}
             style={{ fontFamily: "var(--mono)", fontSize: 12 }}
           />
-          <button onClick={() => removeExtra(kv)}>×</button>
+          <button className="param-remove" onClick={() => removeExtra(kv)} title="Remove">
+            ×
+          </button>
         </div>
       ))}
-      <div style={{ padding: 6 }}>
-        <button onClick={addExtra}>+ Add custom</button>
+      <div className="param-actions">
+        <button className="param-add" onClick={addExtra}>
+          + Add custom
+        </button>
       </div>
     </div>
   );
