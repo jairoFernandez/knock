@@ -480,7 +480,6 @@ export function App() {
       >
         <div className="topbar" data-tauri-drag-region>
           <h1 data-tauri-drag-region>KNOCK</h1>
-          <button onClick={openPlainShell}>Shell</button>
           <div className="topbar-spacer" data-tauri-drag-region />
           <WindowControls />
         </div>
@@ -546,7 +545,13 @@ export function App() {
             }
           />
         )}
-        <Statusbar scale={uiScale} onScaleChange={setUiScale} />
+        <Statusbar
+          scale={uiScale}
+          onScaleChange={setUiScale}
+          onOpenShell={() => {
+            void openPlainShell();
+          }}
+        />
       </div>
     );
   }
@@ -590,7 +595,6 @@ export function App() {
         <h1 data-tauri-drag-region>KNOCK</h1>
         <button onClick={() => setShowNew(true)}>New…</button>
         <button onClick={openWorkspace}>Open…</button>
-        <button onClick={openPlainShell}>Shell</button>
         <div className="ws-tabs">
           {openTabs.map((root) => {
             const isActive = workspace?.root === root;
@@ -1291,6 +1295,9 @@ export function App() {
         hint={error ? null : selected ?? null}
         scale={uiScale}
         onScaleChange={setUiScale}
+        onOpenShell={() => {
+          void openPlainShell();
+        }}
       />
     </div>
   );

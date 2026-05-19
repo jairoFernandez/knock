@@ -8,6 +8,7 @@ interface Props {
   hint?: string | null;
   scale?: number;
   onScaleChange?: (v: number) => void;
+  onOpenShell?: () => void;
 }
 
 export const SCALE_MIN = 0.7;
@@ -104,20 +105,23 @@ function PerfBadge() {
     <button
       className={`statusbar-item perf${expanded ? " expanded" : ""}`}
       onClick={() => setExpanded((v) => !v)}
-      title={expanded ? "Hide system stats" : "Show system stats"}
+      title={expanded ? "Hide system and app stats" : "Show system and app stats"}
     >
       <span className="perf-glyph">{expanded ? "▾" : "▸"}</span>
       <span>perf</span>
       {expanded && stats && (
         <>
           <span className="perf-stat">
-            cpu {stats.cpuPercent.toFixed(0)}%
+            sys cpu {stats.cpuPercent.toFixed(0)}%
           </span>
           <span className="perf-stat">
-            mem {fmtBytes(stats.memUsed)}/{fmtBytes(stats.memTotal)}
+            sys mem {fmtBytes(stats.memUsed)}/{fmtBytes(stats.memTotal)}
           </span>
           <span className="perf-stat">
-            app {fmtBytes(stats.appMem)} · {stats.appCpu.toFixed(0)}%
+            app cpu {stats.appCpu.toFixed(0)}%
+          </span>
+          <span className="perf-stat">
+            app mem {fmtBytes(stats.appMem)}
           </span>
         </>
       )}
@@ -125,7 +129,15 @@ function PerfBadge() {
   );
 }
 
-export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, onScaleChange }: Props) {
+export function Statusbar({
+  workspaceRoot,
+  workspaceName,
+  envName,
+  hint,
+  scale,
+  onScaleChange,
+  onOpenShell,
+}: Props) {
   const [meta, setMeta] = useState<RepoMeta>({ stars: null });
   const [version, setVersion] = useState<VersionInfo | null>(null);
 
@@ -181,6 +193,15 @@ export function Statusbar({ workspaceRoot, workspaceName, envName, hint, scale, 
   return (
     <div className="statusbar">
       <div className="statusbar-left">
+        {onOpenShell && (
+          <button
+            className="statusbar-item link"
+            onClick={onOpenShell}
+            title="Open a new shell in the bottom dock"
+          >
+            shell
+          </button>
+        )}
         {workspaceRoot ? (
           <>
             <span className="statusbar-item" title={workspaceRoot}>

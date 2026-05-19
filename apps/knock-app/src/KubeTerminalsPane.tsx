@@ -272,6 +272,7 @@ interface Props {
   spawnArgs: KubeTerminalSpawnArgs | null;
   bodyCollapsed?: boolean;
   toolbar?: React.ReactNode;
+  hideNewButton?: boolean;
   onTabCreated?: () => void;
   onTabSelected?: () => void;
 }
@@ -280,6 +281,7 @@ export function KubeTerminalsPane({
   spawnArgs,
   bodyCollapsed = false,
   toolbar,
+  hideNewButton = false,
   onTabCreated,
   onTabSelected,
 }: Props) {
@@ -336,23 +338,25 @@ export function KubeTerminalsPane({
             </button>
           );
         })}
-        <button
-          className="kube-terms-new"
-          onClick={newTab}
-          title={
-            spawnArgs
-              ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
-              : "New plain shell"
-          }
-        >
-          + Shell
-        </button>
+        {!hideNewButton && (
+          <button
+            className="kube-terms-new"
+            onClick={newTab}
+            title={
+              spawnArgs
+                ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
+                : "New plain shell"
+            }
+          >
+            + Shell
+          </button>
+        )}
         {toolbar}
       </div>
       {!bodyCollapsed && <div className="kube-terms-body">
         {!activeTab && (
           <div className="kube-empty">
-            No terminals. Click <strong>+ Shell</strong> to start one
+            No terminals. Create a <strong>new shell</strong> to start one
             {spawnArgs ? ` for ${spawnArgs.project}/${spawnArgs.name}` : ""}.
           </div>
         )}

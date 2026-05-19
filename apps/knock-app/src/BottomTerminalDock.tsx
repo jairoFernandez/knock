@@ -1,6 +1,6 @@
 import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
-import type { KubeTerminalSpawnArgs } from "./kubeTerminalStore";
+import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
 
 interface Props {
   spawnArgs: KubeTerminalSpawnArgs | null;
@@ -24,6 +24,15 @@ export function BottomTerminalDock({
     onDelta: (delta) => onHeightDelta(-delta),
   });
 
+  async function openNewShell() {
+    if (spawnArgs) {
+      await terminalStore.openNewTab(spawnArgs);
+    } else {
+      await terminalStore.openGeneralTab();
+    }
+    onExpandedChange(true);
+  }
+
   return (
     <section
       className={`bottom-terminal-dock ${expanded ? "expanded" : "collapsed"} ${
@@ -40,10 +49,24 @@ export function BottomTerminalDock({
       <KubeTerminalsPane
         spawnArgs={spawnArgs}
         bodyCollapsed={!expanded}
+        hideNewButton
         onTabCreated={() => onExpandedChange(true)}
         onTabSelected={() => onExpandedChange(true)}
         toolbar={
           <div className="bottom-terminal-actions">
+            <button
+              className="bottom-terminal-new"
+              title={
+                spawnArgs
+                  ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
+                  : "New plain shell"
+              }
+              onClick={() => {
+                void openNewShell();
+              }}
+            >
+              + Shell
+            </button>
             <button
               title={expanded ? "Collapse terminal" : "Open terminal"}
               onClick={() => onExpandedChange(!expanded)}
