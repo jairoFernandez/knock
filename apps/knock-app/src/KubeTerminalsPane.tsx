@@ -15,6 +15,31 @@ function useStoreSnapshot(): number {
   );
 }
 
+function ShellControlIcon({
+  children,
+  size = 14,
+}: {
+  children: React.ReactNode;
+  size?: number;
+}) {
+  return (
+    <svg
+      className="shell-control-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {children}
+    </svg>
+  );
+}
+
 interface PaneViewProps {
   pane: Pane;
   tabId: string;
@@ -141,33 +166,56 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
       </span>
       <div className="kube-leaf-actions">
         <button
+          className="kube-leaf-action"
           title="Split right"
+          aria-label="Split right"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
             terminalStore.splitActive("h");
           }}
         >
-          Split →
+          <ShellControlIcon>
+            <path d="M2.5 3.5h11" />
+            <path d="M2.5 8h11" />
+            <path d="M2.5 12.5h11" />
+            <path d="M8 2.5v11" opacity="0.45" />
+            <path d="M10 8h3.5" />
+            <path d="M11.8 6.2 13.5 8l-1.7 1.8" />
+          </ShellControlIcon>
         </button>
         <button
+          className="kube-leaf-action"
           title="Split down"
+          aria-label="Split down"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
             terminalStore.splitActive("v");
           }}
         >
-          Split ↓
+          <ShellControlIcon>
+            <path d="M3.5 2.5v11" />
+            <path d="M8 2.5v11" />
+            <path d="M12.5 2.5v11" />
+            <path d="M2.5 8h11" opacity="0.45" />
+            <path d="M8 10v3.5" />
+            <path d="M6.2 11.8 8 13.5l1.8-1.7" />
+          </ShellControlIcon>
         </button>
         <button
+          className="kube-leaf-action danger"
           title="Close pane"
+          aria-label="Close pane"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.closeLeaf(tabId, entry.id);
           }}
         >
-          ×
+          <ShellControlIcon>
+            <path d="M4.5 4.5l7 7" />
+            <path d="M11.5 4.5l-7 7" />
+          </ShellControlIcon>
         </button>
       </div>
     </div>
@@ -327,13 +375,25 @@ export function KubeTerminalsPane({
               <span
                 className="kube-terms-tab-close"
                 role="button"
+                tabIndex={0}
                 title="Close terminal tab"
+                aria-label="Close terminal tab"
                 onClick={(e) => {
                   e.stopPropagation();
                   terminalStore.closeTab(tab.id);
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    terminalStore.closeTab(tab.id);
+                  }
+                }}
               >
-                ×
+                <ShellControlIcon size={12}>
+                  <path d="M4.5 4.5l7 7" />
+                  <path d="M11.5 4.5l-7 7" />
+                </ShellControlIcon>
               </span>
             </button>
           );
@@ -348,7 +408,11 @@ export function KubeTerminalsPane({
                 : "New plain shell"
             }
           >
-            + Shell
+            <ShellControlIcon size={13}>
+              <path d="M8 3v10" />
+              <path d="M3 8h10" />
+            </ShellControlIcon>
+            <span>Shell</span>
           </button>
         )}
         {toolbar}

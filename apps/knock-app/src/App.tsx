@@ -595,6 +595,19 @@ export function App() {
         <h1 data-tauri-drag-region>KNOCK</h1>
         <button onClick={() => setShowNew(true)}>New…</button>
         <button onClick={openWorkspace}>Open…</button>
+        <button
+          className="workspace-name"
+          title="Edit workspace appearance"
+          onClick={() => setShowAppearance(true)}
+          style={
+            workspace.color
+              ? { background: workspace.color, color: "#fff", borderColor: workspace.color }
+              : undefined
+          }
+        >
+          {workspace.icon && <span className="workspace-icon">{workspace.icon}</span>}
+          <span>{workspace.name}</span>
+        </button>
         <div className="ws-tabs">
           {openTabs.map((root) => {
             const isActive = workspace?.root === root;
@@ -1250,6 +1263,14 @@ export function App() {
           onSaved={(next) => {
             setShowAppearance(false);
             setWorkspace({ ...workspace, color: next.color, icon: next.icon });
+            setTabMeta((prev) => ({
+              ...prev,
+              [workspace.root]: {
+                ...(prev[workspace.root] ?? { name: workspace.name }),
+                color: next.color,
+                icon: next.icon,
+              },
+            }));
           }}
         />
       )}

@@ -11,6 +11,30 @@ interface Props {
   onHeightDelta: (delta: number) => void;
 }
 
+function DockIcon({
+  children,
+  size = 14,
+}: {
+  children: React.ReactNode;
+  size?: number;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {children}
+    </svg>
+  );
+}
+
 export function BottomTerminalDock({
   spawnArgs,
   expanded,
@@ -65,22 +89,48 @@ export function BottomTerminalDock({
                 void openNewShell();
               }}
             >
-              + Shell
+              <DockIcon size={13}>
+                <path d="M8 3v10" />
+                <path d="M3 8h10" />
+              </DockIcon>
+              <span>Shell</span>
             </button>
             <button
+              className="bottom-terminal-icon"
               title={expanded ? "Collapse terminal" : "Open terminal"}
+              aria-label={expanded ? "Collapse terminal" : "Open terminal"}
               onClick={() => onExpandedChange(!expanded)}
             >
-              {expanded ? "▾" : "▴"}
+              <DockIcon>
+                {expanded ? <path d="M4 6.5 8 10l4-3.5" /> : <path d="M4 9.5 8 6l4 3.5" />}
+              </DockIcon>
             </button>
             <button
+              className="bottom-terminal-icon"
               title={maximized ? "Restore terminal" : "Maximize terminal"}
+              aria-label={maximized ? "Restore terminal" : "Maximize terminal"}
               onClick={() => {
                 onMaximizedChange(!maximized);
                 onExpandedChange(true);
               }}
             >
-              {maximized ? "⤡" : "⤢"}
+              <DockIcon>
+                {maximized ? (
+                  <>
+                    <path d="M6.5 3.5H3.5v3" />
+                    <path d="M3.5 3.5 7 7" />
+                    <path d="M9.5 12.5h3v-3" />
+                    <path d="M12.5 12.5 9 9" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M6.5 3.5h-3v3" />
+                    <path d="M3.5 6.5 7 3" />
+                    <path d="M9.5 12.5h3v-3" />
+                    <path d="M12.5 9.5 9 13" />
+                  </>
+                )}
+              </DockIcon>
             </button>
           </div>
         }
