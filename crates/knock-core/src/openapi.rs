@@ -285,10 +285,7 @@ fn parse_openapi3(
                     k.clone(),
                     SecurityScheme {
                         kind,
-                        scheme: o
-                            .get("scheme")
-                            .and_then(|x| x.as_str())
-                            .map(String::from),
+                        scheme: o.get("scheme").and_then(|x| x.as_str()).map(String::from),
                         bearer_format: o
                             .get("bearerFormat")
                             .and_then(|x| x.as_str())

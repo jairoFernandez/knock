@@ -573,17 +573,24 @@ fn operation_to_request_form(op: &Operation, spec: &NormalizedSpec) -> RequestFo
                     security_headers
                         .insert("Authorization".to_string(), "Bearer {{token}}".to_string());
                 } else if s == "basic" {
-                    security_headers
-                        .insert("Authorization".to_string(), "Basic {{basic_auth}}".to_string());
+                    security_headers.insert(
+                        "Authorization".to_string(),
+                        "Basic {{basic_auth}}".to_string(),
+                    );
                 }
             }
             // Swagger2 "basic" type.
             "basic" => {
-                security_headers
-                    .insert("Authorization".to_string(), "Basic {{basic_auth}}".to_string());
+                security_headers.insert(
+                    "Authorization".to_string(),
+                    "Basic {{basic_auth}}".to_string(),
+                );
             }
             "apiKey" => {
-                let pname = scheme.name.clone().unwrap_or_else(|| "X-API-Key".to_string());
+                let pname = scheme
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "X-API-Key".to_string());
                 let var = format!("{{{{{}}}}}", env_var_for_api_key(&pname));
                 match scheme.location.as_deref().unwrap_or("header") {
                     "query" => {
@@ -761,7 +768,13 @@ fn collect_security_env_vars(spec: &NormalizedSpec) -> Vec<String> {
             continue;
         };
         match scheme.kind.as_str() {
-            "http" => match scheme.scheme.as_deref().unwrap_or("").to_lowercase().as_str() {
+            "http" => match scheme
+                .scheme
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .as_str()
+            {
                 "bearer" => names.push("token".into()),
                 "basic" => names.push("basic_auth".into()),
                 _ => {}
