@@ -89,10 +89,9 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .topbar-spacer { flex: 1; height: 100%; }
-/* macOS: native titlebar already provides traffic lights; offset our custom topbar so it does not collide.
-   Tauri renders the native bar above when decorations are enabled. */
+/* macOS: overlay titlebar — traffic lights float over our topbar. Offset content so it doesn't collide. */
 .app.is-mac .topbar {
-  padding-left: 12px;
+  padding-left: 78px;
 }
 .app.is-mac .win-controls { display: none; }
 .back-btn {
@@ -328,11 +327,9 @@ body {
 .workspace-name:hover { filter: brightness(1.1); }
 .workspace-icon { font-size: 13px; line-height: 1; }
 
-/* Workspace color scope: tint only badge + rail active + thin topbar stripe.
-   Do NOT override --accent globally — it would tint code blocks, links, etc. */
-.app.has-ws-color .topbar {
-  box-shadow: inset 0 2px 0 0 var(--ws-color);
-}
+/* Workspace color scope: tint only badge + rail active.
+   Do NOT override --accent globally — it would tint code blocks, links, etc.
+   Topbar stays neutral (same bg as app) regardless of workspace color. */
 .app.has-ws-color .rail-btn.active {
   color: var(--ws-color);
   border-color: var(--ws-color);

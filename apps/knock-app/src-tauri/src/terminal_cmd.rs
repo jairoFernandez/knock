@@ -521,6 +521,9 @@ pub fn terminal_spawn(
         }
     }
     cmd.env("KUBECONFIG", &kubeconfig_path);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()));
     if let Some(home) = dirs::home_dir() {
         cmd.cwd(home);
     }

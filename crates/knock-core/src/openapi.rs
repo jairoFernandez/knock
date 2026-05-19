@@ -35,6 +35,21 @@ pub struct NormalizedSpec {
     pub title: Option<String>,
     pub base_url: Option<String>,
     pub operations: Vec<Operation>,
+    pub security_schemes: IndexMap<String, SecurityScheme>,
+    pub global_security: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SecurityScheme {
+    /// "http" | "apiKey" | "oauth2" | "openIdConnect" | "basic" (swagger2)
+    pub kind: String,
+    /// for http: "bearer" | "basic" | etc; for apiKey: empty
+    pub scheme: Option<String>,
+    pub bearer_format: Option<String>,
+    /// for apiKey: parameter name
+    pub name: Option<String>,
+    /// for apiKey: "header" | "query" | "cookie"
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -252,12 +267,59 @@ fn parse_openapi3(
         }
     }
 
+    let security_schemes = value
+        .get("components")
+        .and_then(|c| c.get("securitySchemes"))
+        .and_then(|s| s.as_object())
+        .map(|obj| {
+            let mut m = IndexMap::new();
+            for (k, raw) in obj {
+                let v = resolver.deref(raw);
+                let Some(o) = v.as_object() else { continue };
+                let kind = o
+                    .get("type")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                m.insert(
+                    k.clone(),
+                    SecurityScheme {
+                        kind,
+                        scheme: o
+                            .get("scheme")
+                            .and_then(|x| x.as_str())
+                            .map(String::from),
+                        bearer_format: o
+                            .get("bearerFormat")
+                            .and_then(|x| x.as_str())
+                            .map(String::from),
+                        name: o.get("name").and_then(|x| x.as_str()).map(String::from),
+                        location: o.get("in").and_then(|x| x.as_str()).map(String::from),
+                    },
+                );
+            }
+            m
+        })
+        .unwrap_or_default();
+    let global_security: Vec<String> = value
+        .get("security")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_object())
+                .flat_map(|o| o.keys().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(NormalizedSpec {
         format,
         version,
         title,
         base_url,
         operations,
+        security_schemes,
+        global_security,
     })
 }
 
@@ -588,12 +650,52 @@ fn parse_swagger2(value: &serde_json::Value) -> Result<NormalizedSpec, OpenApiEr
         }
     }
 
+    let security_schemes = value
+        .get("securityDefinitions")
+        .and_then(|s| s.as_object())
+        .map(|obj| {
+            let mut m = IndexMap::new();
+            for (k, raw) in obj {
+                let v = resolver.deref(raw);
+                let Some(o) = v.as_object() else { continue };
+                let kind = o
+                    .get("type")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                m.insert(
+                    k.clone(),
+                    SecurityScheme {
+                        kind,
+                        scheme: None,
+                        bearer_format: None,
+                        name: o.get("name").and_then(|x| x.as_str()).map(String::from),
+                        location: o.get("in").and_then(|x| x.as_str()).map(String::from),
+                    },
+                );
+            }
+            m
+        })
+        .unwrap_or_default();
+    let global_security: Vec<String> = value
+        .get("security")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_object())
+                .flat_map(|o| o.keys().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(NormalizedSpec {
         format: SpecFormat::Swagger2,
         version,
         title,
         base_url,
         operations,
+        security_schemes,
+        global_security,
     })
 }
 

@@ -245,6 +245,11 @@ pub fn openapi_apply_import(
     if let Some(b) = resolved_base_url.as_ref() {
         let _ = upsert_env_base_url(&root_path, b);
     }
+    // Seed env vars referenced by security schemes (token, basic_auth, api keys).
+    let security_vars = collect_security_env_vars(&spec);
+    if !security_vars.is_empty() {
+        let _ = upsert_env_vars(&root_path, &security_vars);
+    }
 
     // Apply selections per operation.
     let mut op_lookup: IndexMap<String, &Operation> = IndexMap::new();
@@ -546,8 +551,59 @@ fn sanitize_segment(s: &str) -> String {
     }
 }
 
-fn operation_to_request_form(op: &Operation, _spec: &NormalizedSpec) -> RequestFormDto {
+fn operation_to_request_form(op: &Operation, spec: &NormalizedSpec) -> RequestFormDto {
     let url = format!("{{{{base_url}}}}{}", openapi::templated_path(&op.path));
+
+    // Determine effective security: op-level overrides global.
+    let active_security: &[String] = if !op.security.is_empty() {
+        &op.security
+    } else {
+        &spec.global_security
+    };
+    let mut security_headers: IndexMap<String, String> = IndexMap::new();
+    let mut security_query: IndexMap<String, String> = IndexMap::new();
+    for name in active_security {
+        let Some(scheme) = spec.security_schemes.get(name) else {
+            continue;
+        };
+        match scheme.kind.as_str() {
+            "http" => {
+                let s = scheme.scheme.as_deref().unwrap_or("").to_lowercase();
+                if s == "bearer" {
+                    security_headers
+                        .insert("Authorization".to_string(), "Bearer {{token}}".to_string());
+                } else if s == "basic" {
+                    security_headers
+                        .insert("Authorization".to_string(), "Basic {{basic_auth}}".to_string());
+                }
+            }
+            // Swagger2 "basic" type.
+            "basic" => {
+                security_headers
+                    .insert("Authorization".to_string(), "Basic {{basic_auth}}".to_string());
+            }
+            "apiKey" => {
+                let pname = scheme.name.clone().unwrap_or_else(|| "X-API-Key".to_string());
+                let var = format!("{{{{{}}}}}", env_var_for_api_key(&pname));
+                match scheme.location.as_deref().unwrap_or("header") {
+                    "query" => {
+                        security_query.insert(pname, var);
+                    }
+                    "cookie" => {
+                        security_headers.insert("Cookie".to_string(), format!("{pname}={var}"));
+                    }
+                    _ => {
+                        security_headers.insert(pname, var);
+                    }
+                }
+            }
+            "oauth2" | "openIdConnect" => {
+                security_headers
+                    .insert("Authorization".to_string(), "Bearer {{token}}".to_string());
+            }
+            _ => {}
+        }
+    }
 
     let ct = op.body_content_type.as_deref().unwrap_or("");
     let body = if ct.starts_with("multipart/") && !op.form_fields.is_empty() {
@@ -586,27 +642,38 @@ fn operation_to_request_form(op: &Operation, _spec: &NormalizedSpec) -> RequestF
         }
     };
 
+    let mut headers: Vec<KvDto> = security_headers
+        .into_iter()
+        .map(|(k, v)| KvDto { key: k, value: v })
+        .collect();
+    for (k, v) in &op.header_params {
+        if !headers.iter().any(|h| h.key.eq_ignore_ascii_case(k)) {
+            headers.push(KvDto {
+                key: k.clone(),
+                value: v.clone(),
+            });
+        }
+    }
+    let mut query: Vec<KvDto> = security_query
+        .into_iter()
+        .map(|(k, v)| KvDto { key: k, value: v })
+        .collect();
+    for (k, v) in &op.query_params {
+        if !query.iter().any(|q| q.key == *k) {
+            query.push(KvDto {
+                key: k.clone(),
+                value: v.clone(),
+            });
+        }
+    }
+
     RequestFormDto {
         name: op.summary.clone(),
         method: op.method.clone(),
         url,
         uses: Vec::new(),
-        headers: op
-            .header_params
-            .iter()
-            .map(|(k, v)| KvDto {
-                key: k.clone(),
-                value: v.clone(),
-            })
-            .collect(),
-        query: op
-            .query_params
-            .iter()
-            .map(|(k, v)| KvDto {
-                key: k.clone(),
-                value: v.clone(),
-            })
-            .collect(),
+        headers,
+        query,
         path: op
             .path_params
             .iter()
@@ -617,6 +684,23 @@ fn operation_to_request_form(op: &Operation, _spec: &NormalizedSpec) -> RequestF
             .collect(),
         body,
         openapi: None,
+    }
+}
+
+fn env_var_for_api_key(header_name: &str) -> String {
+    let mut out = String::with_capacity(header_name.len());
+    for ch in header_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "api_key".to_string()
+    } else {
+        trimmed
     }
 }
 
@@ -633,8 +717,11 @@ fn resolve_base_url(spec_base: Option<&str>, source_url: Option<&str>) -> Option
     if base.is_empty() {
         if let Some(src) = source_url {
             if let Ok(u) = url::Url::parse(src) {
-                let origin = format!("{}://{}", u.scheme(), u.host_str().unwrap_or(""));
-                if u.host_str().is_some() {
+                if let Some(host) = u.host_str() {
+                    let origin = match u.port() {
+                        Some(p) => format!("{}://{}:{}", u.scheme(), host, p),
+                        None => format!("{}://{}", u.scheme(), host),
+                    };
                     return Some(origin);
                 }
             }
@@ -656,6 +743,63 @@ fn resolve_base_url(spec_base: Option<&str>, source_url: Option<&str>) -> Option
 
 fn strip_trailing_slash(s: &str) -> String {
     s.trim_end_matches('/').to_string()
+}
+
+fn collect_security_env_vars(spec: &NormalizedSpec) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut referenced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for op in &spec.operations {
+        for n in &op.security {
+            referenced.insert(n.clone());
+        }
+    }
+    for n in &spec.global_security {
+        referenced.insert(n.clone());
+    }
+    for n in &referenced {
+        let Some(scheme) = spec.security_schemes.get(n) else {
+            continue;
+        };
+        match scheme.kind.as_str() {
+            "http" => match scheme.scheme.as_deref().unwrap_or("").to_lowercase().as_str() {
+                "bearer" => names.push("token".into()),
+                "basic" => names.push("basic_auth".into()),
+                _ => {}
+            },
+            "basic" => names.push("basic_auth".into()),
+            "oauth2" | "openIdConnect" => names.push("token".into()),
+            "apiKey" => {
+                let pname = scheme.name.clone().unwrap_or_else(|| "X-API-Key".into());
+                names.push(env_var_for_api_key(&pname));
+            }
+            _ => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn upsert_env_vars(root: &Path, vars: &[String]) -> Result<(), String> {
+    use std::io::Write;
+    let env_dir = root.join("environments");
+    std::fs::create_dir_all(&env_dir).map_err(to_err)?;
+    let path = env_dir.join("local.toml");
+    let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+    for name in vars {
+        let re = regex::Regex::new(&format!(r#"(?m)^\s*{}\s*=.*$"#, regex::escape(name)))
+            .map_err(to_err)?;
+        if re.is_match(&content) {
+            continue;
+        }
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!("{name} = \"\"\n"));
+    }
+    let mut f = std::fs::File::create(&path).map_err(to_err)?;
+    f.write_all(content.as_bytes()).map_err(to_err)?;
+    Ok(())
 }
 
 fn upsert_env_base_url(root: &Path, base_url: &str) -> Result<(), String> {

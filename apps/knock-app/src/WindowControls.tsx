@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export function detectIsMac(): boolean {
@@ -8,18 +8,8 @@ export function detectIsMac(): boolean {
   return /Mac|iPhone|iPad|iPod/i.test(ua) || /Mac/i.test(plat);
 }
 
-let decorationsApplied = false;
-
 export function WindowControls() {
   const [isMac] = useState(detectIsMac);
-
-  useEffect(() => {
-    if (!isMac || decorationsApplied) return;
-    decorationsApplied = true;
-    getCurrentWindow()
-      .setDecorations(true)
-      .catch(() => undefined);
-  }, [isMac]);
 
   if (isMac) {
     // macOS shows native traffic lights via native decorations; nothing to render.

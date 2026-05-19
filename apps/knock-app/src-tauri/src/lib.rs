@@ -16,8 +16,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(TempCache::default())
         .manage(TerminalSessions::default())
-        .setup(|_app| {
+        .setup(|app| {
             sweep_stale_tmp_files();
+            #[cfg(target_os = "macos")]
+            if let Some(win) = app.get_webview_window("main") {
+                use tauri::TitleBarStyle;
+                let _ = win.set_decorations(true);
+                let _ = win.set_title_bar_style(TitleBarStyle::Overlay);
+                apply_macos_titlebar_color(&win);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -105,6 +112,33 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_titlebar_color(win: &tauri::WebviewWindow) {
+    use cocoa::appkit::{NSColor, NSWindow};
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+
+    let Ok(ns_window_ptr) = win.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window_ptr as id;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        // --panel #20212a
+        let bg = NSColor::colorWithRed_green_blue_alpha_(
+            nil,
+            0x20 as f64 / 255.0,
+            0x21 as f64 / 255.0,
+            0x2a as f64 / 255.0,
+            1.0,
+        );
+        ns_window.setBackgroundColor_(bg);
+        let _: () = msg_send![ns_window, setTitlebarAppearsTransparent: true];
+    }
 }
 
 fn cleanup_temp_files(cache: &TempCache) {
