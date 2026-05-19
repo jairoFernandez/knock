@@ -11,6 +11,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import {
+  collectEditableSegments,
+  getSegmentOffset,
+  type TerminalClickBuffer,
+} from "./terminalClickRange";
 
 export type Pane =
   | { kind: "leaf"; termId: string }
@@ -73,6 +78,28 @@ function nextColor(used: Set<string>): string {
 }
 
 type Listener = () => void;
+
+function getBufferRowFromViewport(term: Terminal, viewportRow: number): number {
+  return term.buffer.active.viewportY + viewportRow;
+}
+
+function getClickBuffer(term: Terminal): TerminalClickBuffer {
+  const buf = term.buffer.active;
+  return {
+    cols: term.cols,
+    cursorRow: buf.baseY + buf.cursorY,
+    cursorCol: buf.cursorX,
+    length: buf.length,
+    getLine(row) {
+      const line = buf.getLine(row);
+      if (!line) return null;
+      return {
+        text: line.translateToString(false, 0, term.cols),
+        isWrapped: line.isWrapped,
+      };
+    },
+  };
+}
 
 class Store {
   tabs: Tab[] = [];
@@ -295,9 +322,9 @@ class Store {
     (entry as TerminalEntry & { initialPassphrase?: string | null }).initialPassphrase =
       args.passphrase;
 
-    // Click-to-position-cursor on the current prompt line.
-    // Translates a single-click into N ← / → arrow keys sent through the PTY.
-    // Only the line containing the shell cursor is editable; older rows are ignored.
+    // Click-to-position-cursor on the active editable buffer region.
+    // This supports wrapped input plus common shell continuation prompts by
+    // translating a click into N ← / → arrow keys sent through the PTY.
     let clickStart: { x: number; y: number } | null = null;
     container.addEventListener("mousedown", (ev) => {
       if (ev.button !== 0) return;
@@ -322,12 +349,19 @@ class Store {
       const cellW = rect.width / Math.max(1, term.cols);
       const cellH = rect.height / Math.max(1, term.rows);
       const col = Math.floor((ev.clientX - rect.left) / cellW);
-      const row = Math.floor((ev.clientY - rect.top) / cellH);
-      if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return;
-      const buf = term.buffer.active;
-      const curRow = buf.cursorY;
-      if (row !== curRow) return;
-      const delta = col - buf.cursorX;
+      const viewportRow = Math.floor((ev.clientY - rect.top) / cellH);
+      if (col < 0 || viewportRow < 0 || col >= term.cols || viewportRow >= term.rows) return;
+      const targetRow = getBufferRowFromViewport(term, viewportRow);
+      const clickBuffer = getClickBuffer(term);
+      const segments = collectEditableSegments(clickBuffer);
+      if (segments.length === 0) return;
+      const firstRow = segments[0]?.row ?? 0;
+      const lastRow = segments[segments.length - 1]?.row ?? 0;
+      if (targetRow < firstRow || targetRow > lastRow) return;
+      const targetOffset = getSegmentOffset(segments, targetRow, col);
+      const cursorOffset = getSegmentOffset(segments, clickBuffer.cursorRow, clickBuffer.cursorCol);
+      if (targetOffset === null || cursorOffset === null) return;
+      const delta = targetOffset - cursorOffset;
       if (delta === 0) return;
       const seq = delta > 0 ? "\x1b[C".repeat(delta) : "\x1b[D".repeat(-delta);
       const sid = entry.sessionId;

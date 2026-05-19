@@ -282,7 +282,7 @@ body {
   margin: 0;
   margin-right: 4px;
   letter-spacing: 2px;
-  color: var(--text-dim);
+  color: var(--text);
   font-weight: 600;
 }
 .topbar button {

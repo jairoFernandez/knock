@@ -23,6 +23,7 @@ pub fn run() {
                 use tauri::TitleBarStyle;
                 let _ = win.set_decorations(true);
                 let _ = win.set_title_bar_style(TitleBarStyle::Overlay);
+                let _ = win.set_title("");
                 apply_macos_titlebar_color(&win);
             }
             Ok(())
