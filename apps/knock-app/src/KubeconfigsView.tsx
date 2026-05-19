@@ -3,10 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { KubeconfigEditor } from "./KubeconfigEditor";
 import { highlightYaml } from "./yamlHighlight";
-import { lazy, Suspense } from "react";
-const KubeTerminalsPane = lazy(() =>
-  import("./KubeTerminalsPane").then((m) => ({ default: m.KubeTerminalsPane })),
-);
+import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
 
 const DEFAULT_PROJECT = "default";
 
@@ -31,7 +28,15 @@ interface TerminalInfo {
   available: boolean;
 }
 
-export function KubeconfigsView() {
+interface KubeconfigsViewProps {
+  onTerminalContextChange?: (args: KubeTerminalSpawnArgs | null) => void;
+  onTerminalStarted?: () => void;
+}
+
+export function KubeconfigsView({
+  onTerminalContextChange,
+  onTerminalStarted,
+}: KubeconfigsViewProps) {
   const [storeDir, setStoreDir] = useState<string>("");
   const [entries, setEntries] = useState<KubeEntry[]>([]);
   const [projects, setProjects] = useState<string[]>([DEFAULT_PROJECT]);
@@ -291,6 +296,8 @@ export function KubeconfigsView() {
               onEdit={() =>
                 setMode({ kind: "edit", name: mode.name, project: mode.project })
               }
+              onTerminalContextChange={onTerminalContextChange}
+              onTerminalStarted={onTerminalStarted}
             />
           )}
           {mode.kind === "add" && (
@@ -338,6 +345,8 @@ interface UsePanelProps {
   onClose: () => void;
   onDelete: () => void;
   onEdit: () => void;
+  onTerminalContextChange?: (args: KubeTerminalSpawnArgs | null) => void;
+  onTerminalStarted?: () => void;
 }
 
 function UsePanel({
@@ -350,12 +359,12 @@ function UsePanel({
   onClose,
   onDelete,
   onEdit,
+  onTerminalContextChange,
+  onTerminalStarted,
 }: UsePanelProps) {
   const encrypted = entry?.encrypted ?? true;
   const [pass, setPass] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
-
-  const [termsExpanded, setTermsExpanded] = useState(false);
 
   useEffect(() => {
     setPass("");
@@ -363,9 +372,18 @@ function UsePanel({
   }, [name, project]);
 
   const canEmbed = !encrypted || !!pass;
-  const spawnArgs = canEmbed
-    ? { name, project, encrypted, passphrase: encrypted ? pass : null }
-    : null;
+  const spawnArgs = useMemo<KubeTerminalSpawnArgs | null>(
+    () =>
+      canEmbed
+        ? { name, project, encrypted, passphrase: encrypted ? pass : null }
+        : null,
+    [canEmbed, encrypted, name, pass, project],
+  );
+
+  useEffect(() => {
+    onTerminalContextChange?.(spawnArgs);
+    return () => onTerminalContextChange?.(null);
+  }, [onTerminalContextChange, spawnArgs]);
 
   async function callWith<T>(fn: (passphrase: string | undefined) => Promise<T>): Promise<T | null> {
     if (encrypted && !pass) {
@@ -424,9 +442,25 @@ function UsePanel({
       setStatus({ kind: "info", text: `Opened ${term} with KUBECONFIG loaded.` });
     }
   }
+  async function doOpenBottomShell() {
+    if (!spawnArgs) {
+      setStatus({ kind: "error", text: "Passphrase required" });
+      return;
+    }
+    setBusy(true);
+    try {
+      await terminalStore.openNewTab(spawnArgs);
+      onTerminalStarted?.();
+      setStatus({ kind: "info", text: `Opened bottom shell for ${project}/${name}.` });
+    } catch (e) {
+      setStatus({ kind: "error", text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <section className={`kube-panel ${termsExpanded ? "terms-expanded" : ""}`}>
+    <section className="kube-panel">
       <header className="kube-panel-header">
         <div>
           <div className="kube-panel-title">
@@ -479,8 +513,11 @@ function UsePanel({
           </div>
         )}
         <div className="kube-actions kube-actions-spaced">
-          <button className="primary" onClick={doOpenTerminal} disabled={busy}>
-            Open in terminal
+          <button className="primary" onClick={doOpenBottomShell} disabled={busy}>
+            Open bottom shell
+          </button>
+          <button onClick={doOpenTerminal} disabled={busy}>
+            Open external terminal
           </button>
           <button onClick={doShell} disabled={busy}>
             Copy <code>export KUBECONFIG=…</code>
@@ -510,27 +547,6 @@ function UsePanel({
           />
         </div>
       )}
-
-      <div className="kube-section kube-section-grow kube-terms-section">
-        <div className="kube-section-header">
-          <div className="kube-section-title">Embedded terminals</div>
-          <div className="kube-actions">
-            {encrypted && !pass && (
-              <span className="kube-subtle">Enter passphrase above to start new sessions.</span>
-            )}
-            <button
-              className="kube-gear"
-              onClick={() => setTermsExpanded((v) => !v)}
-              title={termsExpanded ? "Restore" : "Expand"}
-            >
-              {termsExpanded ? "⤡" : "⤢"}
-            </button>
-          </div>
-        </div>
-        <Suspense fallback={<div className="kube-empty">Loading terminals…</div>}>
-          <KubeTerminalsPane spawnArgs={spawnArgs} />
-        </Suspense>
-      </div>
     </section>
   );
 }

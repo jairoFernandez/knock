@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Tree } from "./Tree";
@@ -28,6 +28,8 @@ import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
 import { Statusbar, SCALE_STEP, clampScale } from "./Statusbar";
 import { OpenApiImportModal } from "./OpenApiImportModal";
 import { OpenApiView } from "./OpenApiView";
+import { BottomTerminalDock } from "./BottomTerminalDock";
+import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
 import type { DirEntryDto, RecentEntry } from "./types";
 import type {
   KV,
@@ -144,7 +146,11 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = usePersistedNumber("knock.layout.sidebar", 260);
   const [responseWidth, setResponseWidth] = usePersistedNumber("knock.layout.response", 480);
   const [toolsWidth, setToolsWidth] = usePersistedNumber("knock.layout.tools", 320);
+  const [terminalDockHeight, setTerminalDockHeight] = usePersistedNumber("knock.layout.terminalDock", 300);
   const [activeTool, setActiveTool] = usePersistedString<ToolKey>("knock.layout.toolsTab", null);
+  const [terminalSpawnArgs, setTerminalSpawnArgs] = useState<KubeTerminalSpawnArgs | null>(null);
+  const [terminalDockExpanded, setTerminalDockExpanded] = useState(true);
+  const [terminalDockMaximized, setTerminalDockMaximized] = useState(false);
   const [uiScaleRaw, setUiScaleRaw] = usePersistedNumber("knock.ui.scale", 1);
   const uiScale = clampScale(uiScaleRaw);
   const setUiScale = (v: number) => setUiScaleRaw(clampScale(v));
@@ -444,22 +450,48 @@ export function App() {
     : 0;
   const currentResponse = currentRuns[currentIdx]?.response ?? null;
   const currentRunAt = currentRuns[currentIdx]?.at ?? null;
+  useSyncExternalStore(
+    (cb) => terminalStore.subscribe(cb),
+    () => terminalStore.revision,
+    () => terminalStore.revision,
+  );
+  const terminalDockVisible = terminalStore.tabs.length > 0;
+  const terminalDockRowHeight = terminalDockMaximized
+    ? "minmax(0, calc((100vh / var(--ui-zoom, 1)) - 58px))"
+    : `${terminalDockExpanded ? terminalDockHeight : 34}px`;
+  const terminalDockRows = terminalDockVisible
+    ? `34px minmax(0, 1fr) ${terminalDockRowHeight} 24px`
+    : undefined;
+
+  async function openPlainShell() {
+    await terminalStore.openGeneralTab({ cwd: workspace?.root ?? null });
+    setTerminalDockExpanded(true);
+  }
 
   if (!workspace) {
     const dashCols = activeTool ? `44px 1fr 4px ${toolsWidth}px 36px` : `44px 1fr 36px`;
     return (
       <div
-        className={`app app-dashboard${isMacPlatform ? " is-mac" : ""}`}
-        style={{ gridTemplateColumns: dashCols }}
+        className={`app app-dashboard${terminalDockVisible ? " has-terminal-dock" : ""}${isMacPlatform ? " is-mac" : ""}`}
+        style={{
+          gridTemplateColumns: dashCols,
+          ...(terminalDockRows ? { gridTemplateRows: terminalDockRows } : {}),
+        }}
       >
         <div className="topbar" data-tauri-drag-region>
           <h1 data-tauri-drag-region>KNOCK</h1>
+          <button onClick={openPlainShell}>Shell</button>
           <div className="topbar-spacer" data-tauri-drag-region />
           <WindowControls />
         </div>
         <GlobalRail mode={globalMode} onChange={setGlobalMode} />
         {globalMode === "kube" ? (
-          <KubeconfigsView />
+          <KubeconfigsView
+            onTerminalContextChange={setTerminalSpawnArgs}
+            onTerminalStarted={() => {
+              setTerminalDockExpanded(true);
+            }}
+          />
         ) : (
           <Dashboard
             onOpen={openWorkspaceAt}
@@ -502,6 +534,18 @@ export function App() {
             onCancel={() => resolveConfirm(false)}
           />
         )}
+        {terminalDockVisible && (
+          <BottomTerminalDock
+            spawnArgs={terminalSpawnArgs}
+            expanded={terminalDockExpanded}
+            maximized={terminalDockMaximized}
+            onExpandedChange={setTerminalDockExpanded}
+            onMaximizedChange={setTerminalDockMaximized}
+            onHeightDelta={(d) =>
+              setTerminalDockHeight(clampWidth(terminalDockHeight + d, 120, 720))
+            }
+          />
+        )}
         <Statusbar scale={uiScale} onScaleChange={setUiScale} />
       </div>
     );
@@ -514,13 +558,16 @@ export function App() {
         ? `minmax(0, 1fr)${toolsCols}`
         : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
+  if (terminalDockRows) {
+    appStyle.gridTemplateRows = terminalDockRows;
+  }
   if (workspace.color) {
     (appStyle as Record<string, string>)["--ws-color"] = workspace.color;
   }
 
   return (
     <div
-      className={`app${workspace.color ? " has-ws-color" : ""}${isMacPlatform ? " is-mac" : ""}`}
+      className={`app${workspace.color ? " has-ws-color" : ""}${terminalDockVisible ? " has-terminal-dock" : ""}${isMacPlatform ? " is-mac" : ""}`}
       style={appStyle}
     >
       <div className="topbar" data-tauri-drag-region>
@@ -543,6 +590,7 @@ export function App() {
         <h1 data-tauri-drag-region>KNOCK</h1>
         <button onClick={() => setShowNew(true)}>New…</button>
         <button onClick={openWorkspace}>Open…</button>
+        <button onClick={openPlainShell}>Shell</button>
         <div className="ws-tabs">
           {openTabs.map((root) => {
             const isActive = workspace?.root === root;
@@ -1002,7 +1050,14 @@ export function App() {
       />
 
       <div className="panel editor-panel">
-        {globalMode === "kube" && <KubeconfigsView />}
+        {globalMode === "kube" && (
+          <KubeconfigsView
+            onTerminalContextChange={setTerminalSpawnArgs}
+            onTerminalStarted={() => {
+              setTerminalDockExpanded(true);
+            }}
+          />
+        )}
         {globalMode === "requests" && !selected && <div className="empty">Select a request from the tree.</div>}
         {globalMode === "requests" && selected && isRequest && form && (
           <RequestEditor
@@ -1215,6 +1270,18 @@ export function App() {
           {...confirmPending}
           onConfirm={() => resolveConfirm(true)}
           onCancel={() => resolveConfirm(false)}
+        />
+      )}
+      {terminalDockVisible && (
+        <BottomTerminalDock
+          spawnArgs={terminalSpawnArgs}
+          expanded={terminalDockExpanded}
+          maximized={terminalDockMaximized}
+          onExpandedChange={setTerminalDockExpanded}
+          onMaximizedChange={setTerminalDockMaximized}
+          onHeightDelta={(d) =>
+            setTerminalDockHeight(clampWidth(terminalDockHeight + d, 120, 720))
+          }
         />
       )}
       <Statusbar

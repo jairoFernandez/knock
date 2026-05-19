@@ -3,6 +3,7 @@ import {
   terminalStore,
   SESSION_COLORS,
   type Pane,
+  type KubeTerminalSpawnArgs,
   type TerminalEntry,
 } from "./kubeTerminalStore";
 
@@ -135,29 +136,29 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
         </span>
       )}
       <span className="kube-leaf-tag">
-        {entry.project}/{entry.name}
+        {entry.name ? `${entry.project}/${entry.name}` : entry.cwd || "shell"}
         {entry.exited && " · exited"}
       </span>
       <div className="kube-leaf-actions">
         <button
-          title="Split horizontal"
+          title="Split right"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
             terminalStore.splitActive("h");
           }}
         >
-          ▤
+          Split →
         </button>
         <button
-          title="Split vertical"
+          title="Split down"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
             terminalStore.splitActive("v");
           }}
         >
-          ▥
+          Split ↓
         </button>
         <button
           title="Close pane"
@@ -268,23 +269,32 @@ function SplitView({
 }
 
 interface Props {
-  spawnArgs: {
-    name: string;
-    project: string;
-    encrypted: boolean;
-    passphrase: string | null;
-  } | null;
+  spawnArgs: KubeTerminalSpawnArgs | null;
+  bodyCollapsed?: boolean;
+  toolbar?: React.ReactNode;
+  onTabCreated?: () => void;
+  onTabSelected?: () => void;
 }
 
-export function KubeTerminalsPane({ spawnArgs }: Props) {
+export function KubeTerminalsPane({
+  spawnArgs,
+  bodyCollapsed = false,
+  toolbar,
+  onTabCreated,
+  onTabSelected,
+}: Props) {
   useStoreSnapshot();
   const tabs = terminalStore.tabs;
   const activeTabId = terminalStore.activeTabId;
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
   async function newTab() {
-    if (!spawnArgs) return;
-    await terminalStore.openNewTab(spawnArgs);
+    if (spawnArgs) {
+      await terminalStore.openNewTab(spawnArgs);
+    } else {
+      await terminalStore.openGeneralTab();
+    }
+    onTabCreated?.();
   }
 
   return (
@@ -299,7 +309,10 @@ export function KubeTerminalsPane({ spawnArgs }: Props) {
             <button
               key={tab.id}
               className={`kube-terms-tab ${tab.id === activeTabId ? "active" : ""}`}
-              onClick={() => terminalStore.setActiveTab(tab.id)}
+              onClick={() => {
+                terminalStore.setActiveTab(tab.id);
+                onTabSelected?.();
+              }}
               title={tab.label}
             >
               <span className="kube-terms-tab-colors">
@@ -309,23 +322,34 @@ export function KubeTerminalsPane({ spawnArgs }: Props) {
               </span>
               <span className="kube-terms-tab-label">{tab.label}</span>
               <span className="kube-terms-tab-count">{leaves.length}</span>
+              <span
+                className="kube-terms-tab-close"
+                role="button"
+                title="Close terminal tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  terminalStore.closeTab(tab.id);
+                }}
+              >
+                ×
+              </span>
             </button>
           );
         })}
         <button
           className="kube-terms-new"
           onClick={newTab}
-          disabled={!spawnArgs}
           title={
             spawnArgs
               ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
-              : "Select a kubeconfig (and unlock if encrypted) to start a terminal."
+              : "New plain shell"
           }
         >
           + Shell
         </button>
+        {toolbar}
       </div>
-      <div className="kube-terms-body">
+      {!bodyCollapsed && <div className="kube-terms-body">
         {!activeTab && (
           <div className="kube-empty">
             No terminals. Click <strong>+ Shell</strong> to start one
@@ -341,7 +365,7 @@ export function KubeTerminalsPane({ spawnArgs }: Props) {
             activeLeaf={activeTab.activeLeaf}
           />
         )}
-      </div>
+      </div>}
     </div>
   );
 }

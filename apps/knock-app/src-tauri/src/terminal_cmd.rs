@@ -492,15 +492,20 @@ pub fn terminal_spawn(
     app: AppHandle,
     cache: State<'_, TempCache>,
     sessions: State<'_, TerminalSessions>,
-    name: String,
+    name: Option<String>,
     project: Option<String>,
     passphrase: Option<String>,
+    cwd: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<String, String> {
-    let project = project_or_default(project);
-    let pass = pass_opt(passphrase);
-    let kubeconfig_path = ensure_temp(&cache, &name, &project, pass.as_deref())?;
+    let kubeconfig_path = if let Some(name) = name.filter(|s| !s.is_empty()) {
+        let project = project_or_default(project);
+        let pass = pass_opt(passphrase);
+        Some(ensure_temp(&cache, &name, &project, pass.as_deref())?)
+    } else {
+        None
+    };
 
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -520,14 +525,18 @@ pub fn terminal_spawn(
             cmd.arg("-l");
         }
     }
-    cmd.env("KUBECONFIG", &kubeconfig_path);
+    if let Some(kubeconfig_path) = kubeconfig_path {
+        cmd.env("KUBECONFIG", &kubeconfig_path);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env(
         "LANG",
         std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()),
     );
-    if let Some(home) = dirs::home_dir() {
+    if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
+        cmd.cwd(cwd);
+    } else if let Some(home) = dirs::home_dir() {
         cmd.cwd(home);
     }
 

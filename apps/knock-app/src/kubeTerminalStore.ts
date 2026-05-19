@@ -23,11 +23,21 @@ export interface Tab {
   activeLeaf: string; // termId of focused leaf
 }
 
+export interface KubeTerminalSpawnArgs {
+  name?: string | null;
+  project?: string | null;
+  encrypted?: boolean;
+  passphrase: string | null;
+  cwd?: string | null;
+  title?: string | null;
+}
+
 export interface TerminalEntry {
   id: string;            // stable termId (uuid)
-  name: string;          // kubeconfig name
-  project: string;       // kubeconfig project
+  name: string | null;   // kubeconfig name, null for a plain shell
+  project: string | null; // kubeconfig project, null for a plain shell
   encrypted: boolean;
+  cwd: string | null;
   sessionId: string | null;   // backend session id (null until spawned)
   term: Terminal;
   fit: FitAddon;
@@ -90,18 +100,13 @@ class Store {
   }
 
   /**
-   * Create a new tab containing a single fresh terminal leaf bound to the
-   * given kubeconfig. Spawns the backend PTY session asynchronously.
+   * Create a new tab containing a single fresh terminal leaf. It may be bound
+   * to a kubeconfig, or it may be a plain shell.
    */
-  async openNewTab(args: {
-    name: string;
-    project: string;
-    encrypted: boolean;
-    passphrase: string | null;
-  }): Promise<string> {
+  async openNewTab(args: KubeTerminalSpawnArgs): Promise<string> {
     const t = this.createTerminal(args);
     const tabId = `t-${cryptoRandom()}`;
-    const label = `${args.name}`;
+    const label = t.title;
     const tab: Tab = {
       id: tabId,
       label,
@@ -113,6 +118,36 @@ class Store {
     this.emit();
     await this.spawn(t);
     return tabId;
+  }
+
+  async openGeneralTab(args: { cwd?: string | null; title?: string | null } = {}): Promise<string> {
+    return this.openNewTab({
+      name: null,
+      project: null,
+      encrypted: false,
+      passphrase: null,
+      cwd: args.cwd ?? null,
+      title: args.title ?? "Shell",
+    });
+  }
+
+  /**
+   * Create a new tab using the active terminal's kubeconfig. This keeps the
+   * bottom dock useful after the user navigates away from the kubeconfig view.
+   */
+  async openNewTabFromActive(): Promise<string | null> {
+    const tab = this.getActiveTab();
+    if (!tab) return null;
+    const src = this.terminals.get(tab.activeLeaf);
+    if (!src) return null;
+    return this.openNewTab({
+      name: src.name,
+      project: src.project,
+      encrypted: src.encrypted,
+      passphrase: null,
+      cwd: src.cwd,
+      title: src.name ? src.title : "Shell",
+    });
   }
 
   /**
@@ -129,6 +164,8 @@ class Store {
       project: src.project,
       encrypted: src.encrypted,
       passphrase: null, // temp file is already cached after the first spawn
+      cwd: src.cwd,
+      title: src.name ? undefined : "Shell",
     });
     tab.layout = replaceLeaf(tab.layout, tab.activeLeaf, {
       kind: "split",
@@ -140,6 +177,21 @@ class Store {
     tab.activeLeaf = t.id;
     this.emit();
     await this.spawn(t);
+  }
+
+  /**
+   * Close an entire terminal tab and kill every leaf/subshell in it.
+   */
+  async closeTab(tabId: string): Promise<void> {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const leafIds = collectLeaves(tab.layout).map((leaf) => leaf.termId);
+    this.tabs = this.tabs.filter((t) => t.id !== tabId);
+    if (this.activeTabId === tabId) {
+      this.activeTabId = this.tabs[0]?.id ?? null;
+    }
+    await Promise.all(leafIds.map((termId) => this.disposeTerminal(termId)));
+    this.emit();
   }
 
   /**
@@ -182,11 +234,12 @@ class Store {
   }
 
   private createTerminal(args: {
-    name: string;
-    project: string;
-    encrypted: boolean;
+    name?: string | null;
+    project?: string | null;
+    encrypted?: boolean;
     passphrase: string | null;
-    title?: string;
+    cwd?: string | null;
+    title?: string | null;
     color?: string;
   }): TerminalEntry {
     const id = `term-${cryptoRandom()}`;
@@ -212,9 +265,10 @@ class Store {
 
     const entry: TerminalEntry = {
       id,
-      name: args.name,
-      project: args.project,
-      encrypted: args.encrypted,
+      name: args.name ?? null,
+      project: args.project ?? null,
+      encrypted: args.encrypted ?? false,
+      cwd: args.cwd ?? null,
       sessionId: null,
       term,
       fit,
@@ -222,7 +276,7 @@ class Store {
       unlisten: [],
       exited: false,
       spawning: false,
-      title: args.title ?? args.name,
+      title: args.title ?? args.name ?? "Shell",
       color: args.color ?? nextColor(usedColors),
     };
 
@@ -298,6 +352,7 @@ class Store {
         name: entry.name,
         project: entry.project,
         passphrase: e.initialPassphrase ?? null,
+        cwd: entry.cwd,
         cols: entry.term.cols || 80,
         rows: entry.term.rows || 24,
       });
