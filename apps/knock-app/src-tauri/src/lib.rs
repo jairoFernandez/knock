@@ -46,6 +46,8 @@ pub fn run() {
             commands::clear_history,
             commands::list_recents,
             commands::forget_recent,
+            commands::set_recent_favorite,
+            commands::reorder_recents,
             commands::create_entry,
             commands::delete_entry,
             commands::rename_entry,
@@ -103,6 +105,7 @@ pub fn run() {
             updates_cmd::check_update,
             updates_cmd::download_app_update,
             updates_cmd::install_app_update,
+            updates_cmd::run_app_installer,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

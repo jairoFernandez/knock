@@ -13,10 +13,28 @@ interface Props {
   onCancel: () => void;
 }
 
+const PALETTE = [
+  "#8b6cff",
+  "#6ec9d6",
+  "#75d76b",
+  "#e0a04a",
+  "#e36572",
+  "#d96cd6",
+  "#5b8ef0",
+  "#9b9ea8",
+];
+
+const ICONS = [
+  "★", "◆", "●", "▲", "■", "♠", "♣", "♥", "♦", "✦",
+  "✧", "⚡", "⚙", "⌂", "☕", "🔥", "🚀", "🐍", "🦀", "🍃",
+];
+
 export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
   const [parent, setParent] = useState<string>("");
   const [name, setName] = useState<string>("");
   const [git, setGit] = useState<boolean>(true);
+  const [color, setColor] = useState<string>("");
+  const [icon, setIcon] = useState<string>("");
   const [openapiUrl, setOpenapiUrl] = useState<string>("");
   const [openapiFile, setOpenapiFile] = useState<string>("");
   const [openapiTab, setOpenapiTab] = useState<"none" | "url" | "file">("none");
@@ -54,11 +72,27 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
     setBusy(true);
     try {
       setProgress("Creating workspace…");
-      const info = await invoke<WorkspaceInfo>("init_workspace", {
+      let info = await invoke<WorkspaceInfo>("init_workspace", {
         parent,
         name: name.trim(),
         git,
       });
+
+      const finalColor = color.trim() || null;
+      const finalIcon = icon.trim() || null;
+      if (finalColor || finalIcon) {
+        try {
+          setProgress("Applying appearance…");
+          await invoke("set_workspace_appearance", {
+            root: info.root,
+            color: finalColor,
+            icon: finalIcon,
+          });
+          info = { ...info, color: finalColor, icon: finalIcon };
+        } catch (e) {
+          console.error("set_workspace_appearance failed", e);
+        }
+      }
 
       if (source) {
         try {
@@ -137,6 +171,88 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
           />
           Initialize a git repo
         </label>
+
+        <div style={{ marginTop: 8, borderTop: "1px solid #2a2a2a", paddingTop: 8 }}>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6 }}>
+            Appearance (optional)
+          </div>
+          <label>
+            Color
+            <div className="ws-palette">
+              <button
+                type="button"
+                className={`ws-color-chip none ${color === "" ? "active" : ""}`}
+                onClick={() => setColor("")}
+                title="No color"
+              >
+                ×
+              </button>
+              {PALETTE.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`ws-color-chip ${color === c ? "active" : ""}`}
+                  style={{ background: c }}
+                  onClick={() => setColor(c)}
+                  title={c}
+                />
+              ))}
+              <input
+                type="text"
+                className="ws-color-input"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                placeholder="#rrggbb"
+              />
+            </div>
+          </label>
+          <label>
+            Icon
+            <div className="ws-icon-grid">
+              <button
+                type="button"
+                className={`ws-icon-chip none ${icon === "" ? "active" : ""}`}
+                onClick={() => setIcon("")}
+                title="No icon"
+              >
+                ×
+              </button>
+              {ICONS.map((i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className={`ws-icon-chip ${icon === i ? "active" : ""}`}
+                  onClick={() => setIcon(i)}
+                >
+                  {i}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={icon}
+              onChange={(e) => setIcon(e.target.value.slice(0, 4))}
+              placeholder="emoji or char"
+              maxLength={4}
+            />
+          </label>
+          {(color || icon) && (
+            <div className="ws-preview">
+              <span className="ws-preview-label">Preview</span>
+              <span
+                className="ws-preview-badge"
+                style={
+                  color
+                    ? { background: color, color: "#fff", borderColor: color }
+                    : {}
+                }
+              >
+                {icon && <span className="ws-preview-icon">{icon}</span>}
+                <span>{name.trim() || "workspace"}</span>
+              </span>
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: 8, borderTop: "1px solid #2a2a2a", paddingTop: 8 }}>
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 6 }}>

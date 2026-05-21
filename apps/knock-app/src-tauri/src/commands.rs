@@ -1058,6 +1058,16 @@ pub fn forget_recent(root: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn set_recent_favorite(root: String, favorite: bool) -> Result<(), String> {
+    crate::recents::set_favorite(&root, favorite).map_err(to_err)
+}
+
+#[tauri::command]
+pub fn reorder_recents(roots: Vec<String>) -> Result<(), String> {
+    crate::recents::reorder(&roots).map_err(to_err)
+}
+
+#[tauri::command]
 pub fn init_workspace(parent: String, name: String, git: bool) -> Result<WorkspaceInfo, String> {
     if name.trim().is_empty() {
         return Err("workspace name cannot be empty".into());

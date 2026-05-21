@@ -70,12 +70,6 @@ interface UpdateStatus {
   body: string;
 }
 
-interface DownloadedAsset {
-  path: string;
-  name: string;
-  kind: string;
-}
-
 function UpdateBadge() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [phase, setPhase] = useState<"idle" | "checking" | "downloading" | "installing" | "done" | "error">("idle");
@@ -102,11 +96,9 @@ function UpdateBadge() {
   async function runUpdate() {
     if (!status?.newer) return;
     setError(null);
-    setPhase("downloading");
+    setPhase("installing");
     try {
-      const asset = await invoke<DownloadedAsset>("download_app_update", { linuxFormat: null });
-      setPhase("installing");
-      await invoke("install_app_update", { asset });
+      await invoke("run_app_installer", { target: "app" });
       setPhase("done");
     } catch (e) {
       console.error("update failed", e);
@@ -128,22 +120,20 @@ function UpdateBadge() {
   }
 
   const label =
-    phase === "downloading"
-      ? "downloading…"
-      : phase === "installing"
-        ? "installing…"
-        : phase === "done"
-          ? "restart to apply"
-          : phase === "error"
-            ? "update failed"
-            : `${status.latest} available`;
+    phase === "installing"
+      ? "installer launched…"
+      : phase === "done"
+        ? "installer running — restart when done"
+        : phase === "error"
+          ? "update failed"
+          : `${status.latest} available`;
   const title =
     phase === "error" && error
       ? `Update failed: ${error}`
       : phase === "done"
-        ? "Update downloaded. Restart the app to apply."
-        : `Update from ${status.current} to ${status.latest}. Click to install.`;
-  const busy = phase === "downloading" || phase === "installing";
+        ? "Installer running in Terminal. Approve any prompts (sudo + Gatekeeper xattr). Restart this app when finished."
+        : `Update from ${status.current} to ${status.latest}. Click to run the installer (curl | bash) in Terminal.`;
+  const busy = phase === "installing";
 
   return (
     <button

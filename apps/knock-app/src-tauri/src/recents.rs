@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const MAX_ENTRIES: usize = 10;
+const MAX_NON_FAV: usize = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +14,8 @@ pub struct RecentEntry {
     pub color: Option<String>,
     #[serde(default)]
     pub icon: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 fn recents_path() -> Option<PathBuf> {
@@ -50,14 +52,18 @@ fn read_workspace_meta(root: &str) -> (Option<String>, Option<String>, Option<St
     (name, color, icon)
 }
 
-pub fn list() -> Vec<RecentEntry> {
+fn load_raw() -> Vec<RecentEntry> {
     let Some(path) = recents_path() else {
         return Vec::new();
     };
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
-    let mut entries: Vec<RecentEntry> = serde_json::from_str(&raw).unwrap_or_default();
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+pub fn list() -> Vec<RecentEntry> {
+    let mut entries = load_raw();
     // Refresh appearance from disk (color/icon may have changed since last save).
     for e in entries.iter_mut() {
         let (name, color, icon) = read_workspace_meta(&e.root);
@@ -67,7 +73,6 @@ pub fn list() -> Vec<RecentEntry> {
         e.color = color;
         e.icon = icon;
     }
-    entries.sort_by(|a, b| b.last_opened.cmp(&a.last_opened));
     entries
 }
 
@@ -83,26 +88,73 @@ fn save(entries: &[RecentEntry]) -> std::io::Result<()> {
     std::fs::write(path, json)
 }
 
+fn cap_non_favorites(entries: &mut Vec<RecentEntry>) {
+    let mut non_fav = 0usize;
+    entries.retain(|e| {
+        if e.favorite {
+            true
+        } else {
+            non_fav += 1;
+            non_fav <= MAX_NON_FAV
+        }
+    });
+}
+
 pub fn remember(root: &str) -> std::io::Result<()> {
-    let mut entries = list();
-    entries.retain(|e| e.root != root);
+    let mut entries = load_raw();
     let (name, color, icon) = read_workspace_meta(root);
-    entries.insert(
-        0,
-        RecentEntry {
-            root: root.to_string(),
-            name,
-            last_opened: now_unix(),
-            color,
-            icon,
-        },
-    );
-    entries.truncate(MAX_ENTRIES);
+    if let Some(e) = entries.iter_mut().find(|e| e.root == root) {
+        // Existing entry — refresh metadata in place. Do NOT reorder.
+        e.last_opened = now_unix();
+        if name.is_some() {
+            e.name = name;
+        }
+        e.color = color;
+        e.icon = icon;
+    } else {
+        entries.insert(
+            0,
+            RecentEntry {
+                root: root.to_string(),
+                name,
+                last_opened: now_unix(),
+                color,
+                icon,
+                favorite: false,
+            },
+        );
+    }
+    cap_non_favorites(&mut entries);
     save(&entries)
 }
 
 pub fn forget(root: &str) -> std::io::Result<()> {
-    let mut entries = list();
+    let mut entries = load_raw();
     entries.retain(|e| e.root != root);
     save(&entries)
+}
+
+pub fn set_favorite(root: &str, favorite: bool) -> std::io::Result<()> {
+    let mut entries = load_raw();
+    if let Some(e) = entries.iter_mut().find(|e| e.root == root) {
+        e.favorite = favorite;
+    }
+    save(&entries)
+}
+
+pub fn reorder(roots: &[String]) -> std::io::Result<()> {
+    let entries = load_raw();
+    let mut by_root: std::collections::HashMap<String, RecentEntry> =
+        entries.into_iter().map(|e| (e.root.clone(), e)).collect();
+    let mut out: Vec<RecentEntry> = Vec::with_capacity(by_root.len());
+    for r in roots {
+        if let Some(e) = by_root.remove(r) {
+            out.push(e);
+        }
+    }
+    // Append any leftovers (shouldn't normally happen) to avoid silent data loss.
+    for (_, e) in by_root.into_iter() {
+        out.push(e);
+    }
+    save(&out)
 }

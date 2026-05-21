@@ -158,6 +158,7 @@ export interface RecentEntry {
   lastOpened: number;
   color?: string | null;
   icon?: string | null;
+  favorite?: boolean;
 }
 
 export interface FileEntry {

@@ -63,13 +63,6 @@ function dedupe(list: string[]): string[] {
   return Array.from(new Set(list));
 }
 
-function resolveGroup(groups: Record<string, string[]>, root: string): string[] {
-  const stored = groups[root];
-  if (!stored) return [root];
-  const unique = dedupe(stored);
-  return unique.includes(root) ? unique : [...unique, root];
-}
-
 function writeGroup(
   groups: Record<string, string[]>,
   root: string,
@@ -84,16 +77,17 @@ function writeGroup(
   persistTabGroups(groups);
 }
 
-function linkSiblings(
+function appendToAnchor(
   groups: Record<string, string[]>,
-  a: string,
-  b: string,
+  anchor: string,
+  currentTabs: string[],
+  newRoot: string,
 ): string[] {
-  const ga = resolveGroup(groups, a);
-  const gb = resolveGroup(groups, b);
-  const merged = dedupe([...ga, ...gb, a, b]);
-  for (const member of merged) {
-    groups[member] = merged;
+  const merged = dedupe([...currentTabs, anchor, newRoot]);
+  if (merged.length === 1 && merged[0] === anchor) {
+    delete groups[anchor];
+  } else {
+    groups[anchor] = merged;
   }
   persistTabGroups(groups);
   return merged;
@@ -161,8 +155,19 @@ export function App() {
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
   const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const [anchorRoot, setAnchorRoot] = useState<string | null>(null);
+  const anchorRootRef = useRef<string | null>(null);
+  const openTabsRef = useRef<string[]>([]);
   const tabGroupsRef = useRef<Record<string, string[]>>(loadTabGroups());
-  const pendingSiblingOfRef = useRef<string | null>(null);
+  const pendingSourceRef = useRef<"primary" | "secondary">("primary");
+
+  useEffect(() => {
+    anchorRootRef.current = anchorRoot;
+  }, [anchorRoot]);
+
+  useEffect(() => {
+    openTabsRef.current = openTabs;
+  }, [openTabs]);
   const [tabMeta, setTabMeta] = useState<Record<string, { name: string | null; color?: string | null; icon?: string | null }>>({});
   const [showTabPicker, setShowTabPicker] = useState(false);
   const [tabRecents, setTabRecents] = useState<RecentEntry[]>([]);
@@ -354,38 +359,51 @@ export function App() {
     return true;
   }
 
-  async function openWorkspace(siblingOf?: string | null) {
+  type OpenSource = "primary" | "secondary";
+
+  async function openWorkspace(source: OpenSource = "primary") {
     setError(null);
     const picked = await open({ directory: true, multiple: false });
     if (!picked || typeof picked !== "string") return;
-    await openWorkspaceAt(picked, siblingOf);
+    await openWorkspaceAt(picked, source);
   }
 
-  function activateTabGroup(root: string, siblingOf?: string | null) {
-    if (siblingOf && siblingOf !== root) {
-      const merged = linkSiblings(tabGroupsRef.current, siblingOf, root);
-      setOpenTabs(merged);
+  function activateForSource(root: string, source: OpenSource) {
+    if (source === "primary") {
+      const stored = tabGroupsRef.current[root];
+      const group = stored && stored.length > 0 ? dedupe(stored) : [root];
+      const final = group.includes(root) ? group : [...group, root];
+      setAnchorRoot(root);
+      anchorRootRef.current = root;
+      setOpenTabs(final);
+      openTabsRef.current = final;
       return;
     }
-    const group = resolveGroup(tabGroupsRef.current, root);
-    const stored = tabGroupsRef.current[root];
-    if (stored && stored !== group) {
-      tabGroupsRef.current[root] = group;
-      persistTabGroups(tabGroupsRef.current);
+    const anchor = anchorRootRef.current ?? root;
+    if (!anchorRootRef.current) {
+      setAnchorRoot(anchor);
+      anchorRootRef.current = anchor;
     }
-    setOpenTabs(group);
+    const merged = appendToAnchor(
+      tabGroupsRef.current,
+      anchor,
+      openTabsRef.current,
+      root,
+    );
+    setOpenTabs(merged);
+    openTabsRef.current = merged;
   }
 
-  async function openWorkspaceAt(path: string, siblingOf?: string | null) {
+  async function openWorkspaceAt(path: string, source: OpenSource = "primary") {
     if (switchToTab(path)) {
-      activateTabGroup(path, siblingOf);
+      activateForSource(path, source);
       return;
     }
     setError(null);
     try {
       const info = await invoke<WorkspaceInfo>("open_workspace", { path });
       await loadWorkspace(info);
-      activateTabGroup(info.root, siblingOf);
+      activateForSource(info.root, source);
     } catch (e) {
       setError(String(e));
     }
@@ -542,15 +560,15 @@ export function App() {
           />
         ) : (
           <Dashboard
-            onOpen={(root) => openWorkspaceAt(root)}
-            onPickDirectory={() => openWorkspace()}
+            onOpen={(root) => openWorkspaceAt(root, "primary")}
+            onPickDirectory={() => openWorkspace("primary")}
             onCreate={() => {
-              pendingSiblingOfRef.current = null;
+              pendingSourceRef.current = "primary";
               setShowNew(true);
             }}
             onLoadInfo={async (info) => {
               await loadWorkspace(info);
-              activateTabGroup(info.root);
+              activateForSource(info.root, "primary");
             }}
             confirm={confirm}
           />
@@ -575,14 +593,14 @@ export function App() {
           <NewWorkspaceModal
             onCancel={() => {
               setShowNew(false);
-              pendingSiblingOfRef.current = null;
+              pendingSourceRef.current = "primary";
             }}
             onCreated={async (info) => {
               setShowNew(false);
-              const sibling = pendingSiblingOfRef.current;
-              pendingSiblingOfRef.current = null;
+              const source = pendingSourceRef.current;
+              pendingSourceRef.current = "primary";
               await loadWorkspace(info);
-              activateTabGroup(info.root, sibling);
+              activateForSource(info.root, source);
             }}
           />
         )}
@@ -655,13 +673,13 @@ export function App() {
         <h1 data-tauri-drag-region>KNOCK</h1>
         <button
           onClick={() => {
-            pendingSiblingOfRef.current = null;
+            pendingSourceRef.current = "primary";
             setShowNew(true);
           }}
         >
           New…
         </button>
-        <button onClick={() => openWorkspace()}>Open…</button>
+        <button onClick={() => openWorkspace("primary")}>Open…</button>
         <div className="ws-tabs">
           {openTabs.map((root) => {
             const isActive = workspace?.root === root;
@@ -682,7 +700,7 @@ export function App() {
                     setShowAppearance(true);
                     return;
                   }
-                  await openWorkspaceAt(root);
+                  await openWorkspaceAt(root, "secondary");
                 }}
               >
                 {meta?.icon && <span className="workspace-icon">{meta.icon}</span>}
@@ -694,9 +712,22 @@ export function App() {
                     ev.stopPropagation();
                     const next = dedupe(openTabs.filter((r) => r !== root));
                     setOpenTabs(next);
-                    writeGroup(tabGroupsRef.current, root, [root]);
-                    for (const member of next) {
-                      writeGroup(tabGroupsRef.current, member, next);
+                    openTabsRef.current = next;
+                    const anchor = anchorRootRef.current;
+                    if (anchor === root) {
+                      // Closing anchor: drop anchor's stored group entirely.
+                      delete tabGroupsRef.current[root];
+                      const newAnchor = next[next.length - 1] ?? null;
+                      setAnchorRoot(newAnchor);
+                      anchorRootRef.current = newAnchor;
+                      if (newAnchor && next.length > 1) {
+                        writeGroup(tabGroupsRef.current, newAnchor, next);
+                      } else if (newAnchor) {
+                        delete tabGroupsRef.current[newAnchor];
+                      }
+                      persistTabGroups(tabGroupsRef.current);
+                    } else if (anchor) {
+                      writeGroup(tabGroupsRef.current, anchor, next);
                     }
                     delete tabStatesRef.current[root];
                     setTabMeta((prev) => {
@@ -706,7 +737,7 @@ export function App() {
                     });
                     if (isActive) {
                       if (next.length > 0) {
-                        openWorkspaceAt(next[next.length - 1]);
+                        openWorkspaceAt(next[next.length - 1], "secondary");
                       } else {
                         setWorkspace(null);
                         setSelected(null);
@@ -762,7 +793,7 @@ export function App() {
                           title={r.root}
                           onClick={async () => {
                             setShowTabPicker(false);
-                            await openWorkspaceAt(r.root, workspace?.root ?? null);
+                            await openWorkspaceAt(r.root, "secondary");
                           }}
                         >
                           {r.icon && <span className="workspace-icon">{r.icon}</span>}
@@ -778,7 +809,7 @@ export function App() {
                     className="tab-picker-item action"
                     onClick={() => {
                       setShowTabPicker(false);
-                      openWorkspace(workspace?.root ?? null);
+                      openWorkspace("secondary");
                     }}
                   >
                     Open folder…
@@ -787,7 +818,7 @@ export function App() {
                     className="tab-picker-item action"
                     onClick={() => {
                       setShowTabPicker(false);
-                      pendingSiblingOfRef.current = workspace?.root ?? null;
+                      pendingSourceRef.current = "secondary";
                       setShowNew(true);
                     }}
                   >
@@ -1231,14 +1262,14 @@ export function App() {
         <NewWorkspaceModal
           onCancel={() => {
             setShowNew(false);
-            pendingSiblingOfRef.current = null;
+            pendingSourceRef.current = "primary";
           }}
           onCreated={async (info) => {
             setShowNew(false);
-            const sibling = pendingSiblingOfRef.current;
-            pendingSiblingOfRef.current = null;
+            const source = pendingSourceRef.current;
+            pendingSourceRef.current = "primary";
             await loadWorkspace(info);
-            activateTabGroup(info.root, sibling);
+            activateForSource(info.root, source);
           }}
         />
       )}
