@@ -12,8 +12,9 @@ pub mod workspace;
 
 pub use flow::{run_flow, FlowOutcome, StepOutcome};
 pub use model::{
-    BodySpec, Environment, Expect, Flow, FlowStep, Fragment, OpenApiMark, OpenApiParamSpec,
-    OpenApiResponseInfo, Request, ResolvedRequest, Response, WorkspaceConfig,
+    BodySpec, Environment, Expect, Flow, FlowStep, Fragment, MockAuthEntry, MockBody, MockConfig,
+    OpenApiMark, OpenApiParamSpec, OpenApiResponseInfo, Request, RequestMock, ResolvedRequest,
+    Response, WorkspaceConfig,
 };
 pub use resolver::resolve;
 pub use runner::execute;

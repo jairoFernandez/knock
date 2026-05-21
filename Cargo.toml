@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/knock-core", "crates/knock-cli", "apps/knock-app/src-tauri"]
+members = ["crates/knock-core", "crates/knock-cli", "crates/knock-mock", "crates/knock-mock-adapter", "apps/knock-app/src-tauri"]
 
 [workspace.package]
 version = "0.0.11"

@@ -24,6 +24,7 @@ pub fn init_at(parent: &Path, name: &str, with_git: bool) -> Result<PathBuf, Wor
     std::fs::create_dir_all(root.join("fragments"))?;
     std::fs::create_dir_all(root.join("requests"))?;
     std::fs::create_dir_all(root.join("flows"))?;
+    std::fs::create_dir_all(root.join("mocks"))?;
 
     std::fs::write(
         root.join("knock.toml"),
@@ -80,6 +81,14 @@ impl Workspace {
         self.root.join("fragments").join(format!("{name}.toml"))
     }
 
+    pub fn mock_path(&self, name: &str) -> PathBuf {
+        self.root.join("mocks").join(format!("{name}.toml"))
+    }
+
+    pub fn requests_dir(&self) -> PathBuf {
+        self.root.join("requests")
+    }
+
     pub fn environment_path(&self, name: &str) -> Option<PathBuf> {
         let env_dir = self.root.join("environments");
         let local = env_dir.join(format!("{name}.local.toml"));
@@ -132,6 +141,7 @@ mod tests {
         assert!(root.join("fragments").is_dir());
         assert!(root.join("requests").is_dir());
         assert!(root.join("flows").is_dir());
+        assert!(root.join("mocks").is_dir());
     }
 
     #[test]

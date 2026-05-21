@@ -13,6 +13,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 knock-core = { path = "../../../crates/knock-core" }
+knock-mock = { path = "../../../crates/knock-mock" }
+knock-mock-adapter = { path = "../../../crates/knock-mock-adapter" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }
