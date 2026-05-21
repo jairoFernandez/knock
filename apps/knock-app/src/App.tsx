@@ -59,6 +59,45 @@ function persistTabGroups(groups: Record<string, string[]>): void {
   }
 }
 
+function dedupe(list: string[]): string[] {
+  return Array.from(new Set(list));
+}
+
+function resolveGroup(groups: Record<string, string[]>, root: string): string[] {
+  const stored = groups[root];
+  if (!stored) return [root];
+  const unique = dedupe(stored);
+  return unique.includes(root) ? unique : [...unique, root];
+}
+
+function writeGroup(
+  groups: Record<string, string[]>,
+  root: string,
+  tabs: string[],
+): void {
+  const unique = dedupe(tabs);
+  if (unique.length === 0 || (unique.length === 1 && unique[0] === root)) {
+    delete groups[root];
+  } else {
+    groups[root] = unique;
+  }
+  persistTabGroups(groups);
+}
+
+function linkSiblings(
+  groups: Record<string, string[]>,
+  a: string,
+  b: string,
+): string[] {
+  const ga = resolveGroup(groups, a);
+  const gb = resolveGroup(groups, b);
+  const merged = dedupe([...ga, ...gb, a, b]);
+  groups[a] = merged;
+  groups[b] = merged;
+  persistTabGroups(groups);
+  return merged;
+}
+
 function collectChildBases(
   entries: TreeEntry[],
   directories: string[],
@@ -121,8 +160,8 @@ export function App() {
   const [colors, setColors] = useState<Record<string, string>>({});
   const [folderOrders, setFolderOrders] = useState<Record<string, string[]>>({});
   const [openTabs, setOpenTabs] = useState<string[]>([]);
-  const [primaryRoot, setPrimaryRoot] = useState<string | null>(null);
   const tabGroupsRef = useRef<Record<string, string[]>>(loadTabGroups());
+  const pendingSiblingOfRef = useRef<string | null>(null);
   const [tabMeta, setTabMeta] = useState<Record<string, { name: string | null; color?: string | null; icon?: string | null }>>({});
   const [showTabPicker, setShowTabPicker] = useState(false);
   const [tabRecents, setTabRecents] = useState<RecentEntry[]>([]);
@@ -314,32 +353,41 @@ export function App() {
     return true;
   }
 
-  async function openWorkspace() {
+  async function openWorkspace(siblingOf?: string | null) {
     setError(null);
     const picked = await open({ directory: true, multiple: false });
     if (!picked || typeof picked !== "string") return;
-    await openWorkspaceAt(picked);
+    await openWorkspaceAt(picked, siblingOf);
   }
 
-  async function openWorkspaceAt(path: string, source: "primary" | "secondary" = "primary") {
+  function activateTabGroup(root: string, siblingOf?: string | null) {
+    if (siblingOf && siblingOf !== root) {
+      const merged = linkSiblings(tabGroupsRef.current, siblingOf, root);
+      setOpenTabs(merged);
+      return;
+    }
+    const group = resolveGroup(tabGroupsRef.current, root);
+    const stored = tabGroupsRef.current[root];
+    if (stored && stored !== group) {
+      tabGroupsRef.current[root] = group;
+      persistTabGroups(tabGroupsRef.current);
+    }
+    setOpenTabs(group);
+  }
+
+  async function openWorkspaceAt(path: string, siblingOf?: string | null) {
     if (switchToTab(path)) {
-      if (source === "primary") rebindPrimary(path);
+      activateTabGroup(path, siblingOf);
       return;
     }
     setError(null);
     try {
       const info = await invoke<WorkspaceInfo>("open_workspace", { path });
-      if (source === "primary") rebindPrimary(info.root);
       await loadWorkspace(info);
+      activateTabGroup(info.root, siblingOf);
     } catch (e) {
       setError(String(e));
     }
-  }
-
-  function rebindPrimary(root: string) {
-    setPrimaryRoot(root);
-    const group = tabGroupsRef.current[root] ?? [];
-    setOpenTabs(group);
   }
 
   const isRequest = selected?.startsWith("requests/") ?? false;
@@ -493,10 +541,16 @@ export function App() {
           />
         ) : (
           <Dashboard
-            onOpen={openWorkspaceAt}
-            onPickDirectory={openWorkspace}
-            onCreate={() => setShowNew(true)}
-            onLoadInfo={loadWorkspace}
+            onOpen={(root) => openWorkspaceAt(root)}
+            onPickDirectory={() => openWorkspace()}
+            onCreate={() => {
+              pendingSiblingOfRef.current = null;
+              setShowNew(true);
+            }}
+            onLoadInfo={async (info) => {
+              await loadWorkspace(info);
+              activateTabGroup(info.root);
+            }}
             confirm={confirm}
           />
         )}
@@ -518,11 +572,16 @@ export function App() {
         />
         {showNew && (
           <NewWorkspaceModal
-            onCancel={() => setShowNew(false)}
+            onCancel={() => {
+              setShowNew(false);
+              pendingSiblingOfRef.current = null;
+            }}
             onCreated={async (info) => {
               setShowNew(false);
-              rebindPrimary(info.root);
+              const sibling = pendingSiblingOfRef.current;
+              pendingSiblingOfRef.current = null;
               await loadWorkspace(info);
+              activateTabGroup(info.root, sibling);
             }}
           />
         )}
@@ -593,21 +652,15 @@ export function App() {
           </svg>
         </button>
         <h1 data-tauri-drag-region>KNOCK</h1>
-        <button onClick={() => setShowNew(true)}>New…</button>
-        <button onClick={openWorkspace}>Open…</button>
         <button
-          className="workspace-name"
-          title="Edit workspace appearance"
-          onClick={() => setShowAppearance(true)}
-          style={
-            workspace.color
-              ? { background: workspace.color, color: "#fff", borderColor: workspace.color }
-              : undefined
-          }
+          onClick={() => {
+            pendingSiblingOfRef.current = null;
+            setShowNew(true);
+          }}
         >
-          {workspace.icon && <span className="workspace-icon">{workspace.icon}</span>}
-          <span>{workspace.name}</span>
+          New…
         </button>
+        <button onClick={() => openWorkspace()}>Open…</button>
         <div className="ws-tabs">
           {openTabs.map((root) => {
             const isActive = workspace?.root === root;
@@ -624,8 +677,11 @@ export function App() {
                     : undefined
                 }
                 onClick={async () => {
-                  if (isActive) return;
-                  await openWorkspaceAt(root, "secondary");
+                  if (isActive) {
+                    setShowAppearance(true);
+                    return;
+                  }
+                  await openWorkspaceAt(root);
                 }}
               >
                 {meta?.icon && <span className="workspace-icon">{meta.icon}</span>}
@@ -635,28 +691,24 @@ export function App() {
                   title="Close tab"
                   onClick={(ev) => {
                     ev.stopPropagation();
-                    setOpenTabs((prev) => {
-                      const next = prev.filter((r) => r !== root);
-                      if (primaryRoot) {
-                        if (next.length === 0) {
-                          delete tabGroupsRef.current[primaryRoot];
-                        } else {
-                          tabGroupsRef.current[primaryRoot] = next;
-                        }
-                        persistTabGroups(tabGroupsRef.current);
-                      }
-                      return next;
-                    });
+                    const next = dedupe(openTabs.filter((r) => r !== root));
+                    setOpenTabs(next);
+                    writeGroup(tabGroupsRef.current, root, [root]);
+                    const ownerForUpdate = isActive
+                      ? next[next.length - 1] ?? null
+                      : workspace?.root ?? null;
+                    if (ownerForUpdate) {
+                      writeGroup(tabGroupsRef.current, ownerForUpdate, next);
+                    }
                     delete tabStatesRef.current[root];
                     setTabMeta((prev) => {
-                      const next = { ...prev };
-                      delete next[root];
-                      return next;
+                      const nextMeta = { ...prev };
+                      delete nextMeta[root];
+                      return nextMeta;
                     });
                     if (isActive) {
-                      const remaining = openTabs.filter((r) => r !== root);
-                      if (remaining.length > 0) {
-                        openWorkspaceAt(remaining[remaining.length - 1], "secondary");
+                      if (next.length > 0) {
+                        openWorkspaceAt(next[next.length - 1]);
                       } else {
                         setWorkspace(null);
                         setSelected(null);
@@ -712,19 +764,7 @@ export function App() {
                           title={r.root}
                           onClick={async () => {
                             setShowTabPicker(false);
-                            const activeRoot = workspace?.root;
-                            const primary = primaryRoot ?? activeRoot ?? null;
-                            setOpenTabs((prev) => {
-                              const next = [...prev];
-                              if (activeRoot && !next.includes(activeRoot)) next.push(activeRoot);
-                              if (!next.includes(r.root)) next.push(r.root);
-                              if (primary) {
-                                tabGroupsRef.current[primary] = next;
-                                persistTabGroups(tabGroupsRef.current);
-                              }
-                              return next;
-                            });
-                            await openWorkspaceAt(r.root, "secondary");
+                            await openWorkspaceAt(r.root, workspace?.root ?? null);
                           }}
                         >
                           {r.icon && <span className="workspace-icon">{r.icon}</span>}
@@ -740,13 +780,7 @@ export function App() {
                     className="tab-picker-item action"
                     onClick={() => {
                       setShowTabPicker(false);
-                      const activeRoot = workspace?.root;
-                      if (activeRoot) {
-                        setOpenTabs((prev) =>
-                          prev.includes(activeRoot) ? prev : [...prev, activeRoot],
-                        );
-                      }
-                      openWorkspace();
+                      openWorkspace(workspace?.root ?? null);
                     }}
                   >
                     Open folder…
@@ -755,12 +789,7 @@ export function App() {
                     className="tab-picker-item action"
                     onClick={() => {
                       setShowTabPicker(false);
-                      const activeRoot = workspace?.root;
-                      if (activeRoot) {
-                        setOpenTabs((prev) =>
-                          prev.includes(activeRoot) ? prev : [...prev, activeRoot],
-                        );
-                      }
+                      pendingSiblingOfRef.current = workspace?.root ?? null;
                       setShowNew(true);
                     }}
                   >
@@ -1202,11 +1231,16 @@ export function App() {
 
       {showNew && (
         <NewWorkspaceModal
-          onCancel={() => setShowNew(false)}
+          onCancel={() => {
+            setShowNew(false);
+            pendingSiblingOfRef.current = null;
+          }}
           onCreated={async (info) => {
             setShowNew(false);
-            rebindPrimary(info.root);
+            const sibling = pendingSiblingOfRef.current;
+            pendingSiblingOfRef.current = null;
             await loadWorkspace(info);
+            activateTabGroup(info.root, sibling);
           }}
         />
       )}
