@@ -22,6 +22,10 @@ fn repo() -> String {
     std::env::var("KNOCK_REPO").unwrap_or_else(|_| updates::DEFAULT_REPO.to_string())
 }
 
+fn current_version() -> String {
+    env!("KNOCK_VERSION").trim_start_matches('v').to_string()
+}
+
 fn err_to_string<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
@@ -38,7 +42,7 @@ pub async fn check_update(refresh: bool) -> Result<UpdateStatus, String> {
             .await
             .map_err(err_to_string)?
     };
-    let current = updates::current_version().to_string();
+    let current = current_version();
     let newer = updates::is_newer(&current, &release.version);
     Ok(UpdateStatus {
         current,

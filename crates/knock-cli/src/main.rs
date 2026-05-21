@@ -173,6 +173,10 @@ async fn main() -> Result<()> {
     }
 }
 
+fn cli_current_version() -> String {
+    env!("KNOCK_VERSION").trim_start_matches('v').to_string()
+}
+
 async fn self_check(refresh: bool, json: bool) -> Result<()> {
     use knock_core::updates;
     let repo = std::env::var("KNOCK_REPO").unwrap_or_else(|_| updates::DEFAULT_REPO.to_string());
@@ -183,8 +187,8 @@ async fn self_check(refresh: bool, json: bool) -> Result<()> {
     } else {
         updates::fetch_latest_cached(&repo, false).await?
     };
-    let current = updates::current_version();
-    let newer = updates::is_newer(current, &release.version);
+    let current = cli_current_version();
+    let newer = updates::is_newer(&current, &release.version);
     if json {
         let out = serde_json::json!({
             "current": current,
@@ -219,8 +223,8 @@ async fn self_update(version: Option<&str>, yes: bool) -> Result<()> {
         }
         None => updates::fetch_latest(&repo).await?,
     };
-    let current = updates::current_version();
-    if version.is_none() && !updates::is_newer(current, &release.version) {
+    let current = cli_current_version();
+    if version.is_none() && !updates::is_newer(&current, &release.version) {
         println!("knock {current} is up to date.");
         return Ok(());
     }

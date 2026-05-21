@@ -41,7 +41,7 @@ else
   HOST_ARCH := $(UNAME_M)
 endif
 
-.PHONY: help dev build build-cli build-app cross package package-cross clean install-deps tag
+.PHONY: help dev build build-cli build-app cross package package-cross clean install-deps tag set-version
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -94,6 +94,10 @@ package-cross: ## Package cross-built CLI. Vars: TARGET, OS, ARCH
 tag: ## Create + push git tag v$(VERSION)
 	git tag -a v$(VERSION) -m "Release v$(VERSION)"
 	git push origin v$(VERSION)
+
+set-version: ## Bump version everywhere. Vars: V=<x.y.z>
+	@test -n "$(V)" || (echo "V=<x.y.z> required"; exit 1)
+	./scripts/set-version.sh $(V)
 
 clean: ## Remove build artifacts
 	cargo clean

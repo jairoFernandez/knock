@@ -90,7 +90,7 @@ function UpdateBadge() {
         console.error("check_update failed", e);
       }
     }
-    check(false);
+    check(true);
     const id = setInterval(() => check(true), 6 * 60 * 60 * 1000);
     return () => {
       cancelled = true;
