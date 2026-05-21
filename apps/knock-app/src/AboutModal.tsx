@@ -33,6 +33,7 @@ function loadCache(repo: string): Stargazer[] | null {
     const parsed = JSON.parse(raw) as CacheShape;
     if (parsed.repo !== repo) return null;
     if (Date.now() - parsed.fetched_at > CACHE_TTL_MS) return null;
+    if (!Array.isArray(parsed.users) || parsed.users.length === 0) return null;
     return parsed.users;
   } catch {
     return null;
@@ -40,6 +41,7 @@ function loadCache(repo: string): Stargazer[] | null {
 }
 
 function saveCache(repo: string, users: Stargazer[]): void {
+  if (users.length === 0) return;
   try {
     const payload: CacheShape = { fetched_at: Date.now(), repo, users };
     localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
@@ -58,7 +60,9 @@ async function fetchStargazers(repo: string): Promise<Stargazer[]> {
     const resp = await fetch(url, {
       headers: { Accept: "application/vnd.github+json" },
     });
-    if (!resp.ok) break;
+    if (!resp.ok) {
+      throw new Error(`GitHub ${resp.status} ${resp.statusText}`);
+    }
     const data = (await resp.json()) as Stargazer[];
     if (!Array.isArray(data) || data.length === 0) break;
     for (const u of data) {
