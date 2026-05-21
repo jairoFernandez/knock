@@ -56,8 +56,8 @@ pub async fn download_app_update(linux_format: Option<String>) -> Result<Downloa
     let release = updates::fetch_latest(&repo).await.map_err(err_to_string)?;
     let host = updates::detect_host().map_err(err_to_string)?;
     let fmt = linux_format.as_deref().unwrap_or("appimage");
-    let asset = updates::pick_asset(&release, updates::Kind::App, host, fmt)
-        .map_err(err_to_string)?;
+    let asset =
+        updates::pick_asset(&release, updates::Kind::App, host, fmt).map_err(err_to_string)?;
     let tmp = std::env::temp_dir().join(format!("knock-app-update-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(err_to_string)?;
     let dest = tmp.join(&asset.name);

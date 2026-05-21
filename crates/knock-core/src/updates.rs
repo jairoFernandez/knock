@@ -239,10 +239,7 @@ pub fn pick_asset<'a>(
     })
 }
 
-pub fn find_sha_asset<'a>(
-    release: &'a ReleaseInfo,
-    asset_name: &str,
-) -> Option<&'a AssetRef> {
+pub fn find_sha_asset<'a>(release: &'a ReleaseInfo, asset_name: &str) -> Option<&'a AssetRef> {
     let needle = format!("{asset_name}.sha256");
     release.assets.iter().find(|a| a.name == needle)
 }
@@ -278,9 +275,7 @@ pub fn sha256_hex(path: &Path) -> Result<String> {
 pub fn verify_sha256(path: &Path, expected_hex: &str) -> Result<()> {
     let actual = sha256_hex(path)?;
     if !actual.eq_ignore_ascii_case(expected_hex.trim()) {
-        bail!(
-            "checksum mismatch: expected {expected_hex}, got {actual}",
-        );
+        bail!("checksum mismatch: expected {expected_hex}, got {actual}",);
     }
     Ok(())
 }
@@ -361,10 +356,7 @@ pub fn replace_self(new_binary: &Path) -> Result<()> {
     let parent = current
         .parent()
         .ok_or_else(|| anyhow!("no parent dir for current exe"))?;
-    let tmp = parent.join(format!(
-        ".knock-update-{}",
-        std::process::id()
-    ));
+    let tmp = parent.join(format!(".knock-update-{}", std::process::id()));
     std::fs::copy(new_binary, &tmp).context("copy new binary alongside current")?;
     #[cfg(unix)]
     {
