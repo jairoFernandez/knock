@@ -62,6 +62,34 @@ enum Cmd {
         #[command(subcommand)]
         action: KubeCmd,
     },
+    /// Self-update: check / install latest release of this CLI
+    #[command(name = "self")]
+    Selfcmd {
+        #[command(subcommand)]
+        action: SelfCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum SelfCmd {
+    /// Check whether a newer release is available
+    Check {
+        /// Force network fetch (skip cache)
+        #[arg(long)]
+        refresh: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Download and install the latest release in place
+    Update {
+        /// Install a specific tag (e.g. v0.2.0) instead of latest
+        #[arg(long)]
+        version: Option<String>,
+        /// Do not prompt for confirmation
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -138,7 +166,156 @@ async fn main() -> Result<()> {
         Cmd::Check => check(),
         Cmd::Fmt { check } => fmt(check),
         Cmd::Kube { action } => kube(action),
+        Cmd::Selfcmd { action } => match action {
+            SelfCmd::Check { refresh, json } => self_check(refresh, json).await,
+            SelfCmd::Update { version, yes } => self_update(version.as_deref(), yes).await,
+        },
     }
+}
+
+async fn self_check(refresh: bool, json: bool) -> Result<()> {
+    use knock_core::updates;
+    let repo = std::env::var("KNOCK_REPO").unwrap_or_else(|_| updates::DEFAULT_REPO.to_string());
+    let release = if refresh {
+        let r = updates::fetch_latest(&repo).await?;
+        let _ = updates::save_cache(&r);
+        r
+    } else {
+        updates::fetch_latest_cached(&repo, false).await?
+    };
+    let current = updates::current_version();
+    let newer = updates::is_newer(current, &release.version);
+    if json {
+        let out = serde_json::json!({
+            "current": current,
+            "latest": release.version,
+            "tag": release.tag,
+            "newer": newer,
+            "published_at": release.published_at,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else if newer {
+        println!(
+            "Update available: {} → {} (run `knock self update`)",
+            current, release.tag
+        );
+    } else {
+        println!("knock {current} is up to date.");
+    }
+    Ok(())
+}
+
+async fn self_update(version: Option<&str>, yes: bool) -> Result<()> {
+    use knock_core::updates;
+    let repo = std::env::var("KNOCK_REPO").unwrap_or_else(|_| updates::DEFAULT_REPO.to_string());
+    let release = match version {
+        Some(v) => {
+            let tag = if v.starts_with('v') {
+                v.to_string()
+            } else {
+                format!("v{v}")
+            };
+            fetch_release_by_tag(&repo, &tag).await?
+        }
+        None => updates::fetch_latest(&repo).await?,
+    };
+    let current = updates::current_version();
+    if version.is_none() && !updates::is_newer(current, &release.version) {
+        println!("knock {current} is up to date.");
+        return Ok(());
+    }
+    let host = updates::detect_host()?;
+    let asset = updates::pick_asset(&release, updates::Kind::Cli, host, "appimage")?;
+    println!("Installing {} from {}", asset.name, release.tag);
+    if !yes {
+        print!("Proceed? [Y/n] ");
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf).ok();
+        let s = buf.trim().to_lowercase();
+        if matches!(s.as_str(), "n" | "no") {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+    let tmp = tempdir_for_update()?;
+    let archive_path = tmp.join(&asset.name);
+    updates::download_to(&asset.url, &archive_path).await?;
+    match updates::fetch_sha_for(&release, &asset.name).await? {
+        Some(expected) => {
+            updates::verify_sha256(&archive_path, &expected)?;
+            println!("Checksum OK");
+        }
+        None => {
+            eprintln!(
+                "Warning: no .sha256 published for {} — skipping integrity check",
+                asset.name
+            );
+        }
+    }
+    let extracted = updates::extract_cli_archive(&archive_path, &tmp)?;
+    updates::replace_self(&extracted)?;
+    updates::invalidate_cache();
+    println!("Installed knock {}", release.version);
+    Ok(())
+}
+
+async fn fetch_release_by_tag(repo: &str, tag: &str) -> Result<knock_core::updates::ReleaseInfo> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/tags/{tag}");
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("knock/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let json: serde_json::Value = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let tag = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("no tag_name"))?
+        .to_string();
+    let body = json
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let published_at = json
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let assets = json
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    Some(knock_core::updates::AssetRef {
+                        name: a.get("name")?.as_str()?.to_string(),
+                        url: a.get("browser_download_url")?.as_str()?.to_string(),
+                        size: a.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(knock_core::updates::ReleaseInfo {
+        version: tag.trim_start_matches('v').to_string(),
+        tag,
+        body,
+        assets,
+        published_at,
+    })
+}
+
+fn tempdir_for_update() -> Result<PathBuf> {
+    let base = std::env::temp_dir().join(format!("knock-update-{}", std::process::id()));
+    std::fs::create_dir_all(&base)?;
+    Ok(base)
 }
 
 fn kube_store_dir() -> Result<PathBuf> {

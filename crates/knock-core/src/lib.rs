@@ -7,6 +7,7 @@ pub mod parser;
 pub mod resolver;
 pub mod runner;
 pub mod secrets;
+pub mod updates;
 pub mod workspace;
 
 pub use flow::{run_flow, FlowOutcome, StepOutcome};

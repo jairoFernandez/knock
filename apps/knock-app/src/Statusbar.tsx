@@ -60,6 +60,102 @@ interface VersionInfo {
   releaseUrl: string;
 }
 
+interface UpdateStatus {
+  current: string;
+  latest: string;
+  tag: string;
+  newer: boolean;
+  publishedAt: string | null;
+  body: string;
+}
+
+interface DownloadedAsset {
+  path: string;
+  name: string;
+  kind: string;
+}
+
+function UpdateBadge() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [phase, setPhase] = useState<"idle" | "checking" | "downloading" | "installing" | "done" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check(refresh: boolean) {
+      try {
+        const s = await invoke<UpdateStatus>("check_update", { refresh });
+        if (!cancelled) setStatus(s);
+      } catch (e) {
+        console.error("check_update failed", e);
+      }
+    }
+    check(false);
+    const id = setInterval(() => check(true), 6 * 60 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  async function runUpdate() {
+    if (!status?.newer) return;
+    setError(null);
+    setPhase("downloading");
+    try {
+      const asset = await invoke<DownloadedAsset>("download_app_update", { linuxFormat: null });
+      setPhase("installing");
+      await invoke("install_app_update", { asset });
+      setPhase("done");
+    } catch (e) {
+      console.error("update failed", e);
+      setError(String(e));
+      setPhase("error");
+    }
+  }
+
+  if (!status) return null;
+  if (!status.newer) {
+    return (
+      <span
+        className="statusbar-item update up-to-date"
+        title={`knock ${status.current} is up to date.`}
+      >
+        ✓ up to date
+      </span>
+    );
+  }
+
+  const label =
+    phase === "downloading"
+      ? "downloading…"
+      : phase === "installing"
+        ? "installing…"
+        : phase === "done"
+          ? "restart to apply"
+          : phase === "error"
+            ? "update failed"
+            : `${status.latest} available`;
+  const title =
+    phase === "error" && error
+      ? `Update failed: ${error}`
+      : phase === "done"
+        ? "Update downloaded. Restart the app to apply."
+        : `Update from ${status.current} to ${status.latest}. Click to install.`;
+  const busy = phase === "downloading" || phase === "installing";
+
+  return (
+    <button
+      className={`statusbar-item update available${phase === "error" ? " error" : ""}${phase === "done" ? " done" : ""}`}
+      onClick={busy || phase === "done" ? undefined : runUpdate}
+      disabled={busy}
+      title={title}
+    >
+      ⬆ {label}
+    </button>
+  );
+}
+
 interface SystemStats {
   cpuPercent: number;
   memUsed: number;
@@ -223,6 +319,7 @@ export function Statusbar({
           <ZoomControl scale={scale} onChange={onScaleChange} />
         )}
         <PerfBadge />
+        <UpdateBadge />
         {version && (
           <span
             className="statusbar-item version"

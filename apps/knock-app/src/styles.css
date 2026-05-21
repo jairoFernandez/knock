@@ -3944,6 +3944,37 @@ textarea {
   color: var(--text-dim);
 }
 
+.statusbar-item.update {
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: default;
+}
+.statusbar-item.update.up-to-date {
+  color: var(--text-faint);
+}
+.statusbar-item.update.available {
+  cursor: pointer;
+  color: #fff;
+  background: var(--accent, #4a90e2);
+  border: 1px solid transparent;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.statusbar-item.update.available:hover {
+  filter: brightness(1.1);
+}
+.statusbar-item.update.available[disabled] {
+  cursor: progress;
+  opacity: 0.7;
+}
+.statusbar-item.update.error {
+  background: #b04040;
+}
+.statusbar-item.update.done {
+  background: #3a8a3a;
+  cursor: default;
+}
+
 .statusbar-item.zoom {
   display: inline-flex;
   align-items: center;

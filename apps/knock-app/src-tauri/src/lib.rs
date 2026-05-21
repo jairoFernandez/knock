@@ -3,6 +3,7 @@ mod kubeconfig_cmd;
 mod openapi_cmd;
 mod recents;
 mod terminal_cmd;
+mod updates_cmd;
 
 use std::time::{Duration, SystemTime};
 use tauri::{Manager, RunEvent};
@@ -99,6 +100,9 @@ pub fn run() {
             terminal_cmd::terminal_write,
             terminal_cmd::terminal_resize,
             terminal_cmd::terminal_kill,
+            updates_cmd::check_update,
+            updates_cmd::download_app_update,
+            updates_cmd::install_app_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
