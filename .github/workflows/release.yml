@@ -112,6 +112,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Sync version from tag
+        shell: bash
+        run: ./scripts/set-version.sh ${{ needs.create-release.outputs.tag }}
+
       - name: Build CLI
         env:
           KNOCK_VERSION: ${{ needs.create-release.outputs.tag }}
@@ -216,6 +220,10 @@ jobs:
       - name: Install JS deps
         working-directory: apps/knock-app
         run: pnpm install --frozen-lockfile
+
+      - name: Sync version from tag
+        shell: bash
+        run: ./scripts/set-version.sh ${{ needs.create-release.outputs.tag }}
 
       - uses: tauri-apps/tauri-action@v0
         env:
