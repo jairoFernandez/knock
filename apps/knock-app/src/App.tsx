@@ -92,8 +92,9 @@ function linkSiblings(
   const ga = resolveGroup(groups, a);
   const gb = resolveGroup(groups, b);
   const merged = dedupe([...ga, ...gb, a, b]);
-  groups[a] = merged;
-  groups[b] = merged;
+  for (const member of merged) {
+    groups[member] = merged;
+  }
   persistTabGroups(groups);
   return merged;
 }
@@ -694,11 +695,8 @@ export function App() {
                     const next = dedupe(openTabs.filter((r) => r !== root));
                     setOpenTabs(next);
                     writeGroup(tabGroupsRef.current, root, [root]);
-                    const ownerForUpdate = isActive
-                      ? next[next.length - 1] ?? null
-                      : workspace?.root ?? null;
-                    if (ownerForUpdate) {
-                      writeGroup(tabGroupsRef.current, ownerForUpdate, next);
+                    for (const member of next) {
+                      writeGroup(tabGroupsRef.current, member, next);
                     }
                     delete tabStatesRef.current[root];
                     setTabMeta((prev) => {
