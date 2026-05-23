@@ -184,10 +184,7 @@ pub fn build_router(spec: MockSpec) -> Result<Router, ServeError> {
         }
     }
 
-    let state = Arc::new(AppState {
-        spec,
-        auth_by_name,
-    });
+    let state = Arc::new(AppState { spec, auth_by_name });
     Ok(router.with_state(state))
 }
 
@@ -269,7 +266,9 @@ fn render_response(t: &ResponseTemplate, global: &BTreeMap<String, String>) -> R
 
     let (ct_default, body): (Option<&str>, Body) = match &t.body {
         ResponseBody::Empty => (None, Body::empty()),
-        ResponseBody::Text { text } => (Some("text/plain; charset=utf-8"), Body::from(text.clone())),
+        ResponseBody::Text { text } => {
+            (Some("text/plain; charset=utf-8"), Body::from(text.clone()))
+        }
         ResponseBody::Json { json } => (
             Some("application/json"),
             Body::from(serde_json::to_vec(json).unwrap_or_default()),
@@ -287,9 +286,9 @@ fn render_response(t: &ResponseTemplate, global: &BTreeMap<String, String>) -> R
             builder = builder.header("content-type", ct);
         }
     }
-    builder.body(body).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "render error").into_response()
-    })
+    builder
+        .body(body)
+        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "render error").into_response())
 }
 
 fn has_header(map: &BTreeMap<String, String>, name: &str) -> bool {

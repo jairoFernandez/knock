@@ -213,7 +213,9 @@ async fn mock_serve(bind: Option<String>, port: Option<u16>, dump: bool) -> Resu
     let bind_host = bind
         .or_else(|| mock_cfg.and_then(|c| c.bind.clone()))
         .unwrap_or_else(|| "127.0.0.1".into());
-    let bind_port = port.or_else(|| mock_cfg.and_then(|c| c.port)).unwrap_or(3000);
+    let bind_port = port
+        .or_else(|| mock_cfg.and_then(|c| c.port))
+        .unwrap_or(3000);
     let addr: std::net::SocketAddr = format!("{bind_host}:{bind_port}")
         .parse()
         .with_context(|| format!("invalid bind address {bind_host}:{bind_port}"))?;

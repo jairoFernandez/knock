@@ -357,13 +357,19 @@ mod tests {
 
     #[test]
     fn converts_curly_to_colon_params() {
-        assert_eq!(convert_path_params("/users/{id}/items/{iid}"), "/users/:id/items/:iid");
+        assert_eq!(
+            convert_path_params("/users/{id}/items/{iid}"),
+            "/users/:id/items/:iid"
+        );
         assert_eq!(convert_path_params("/plain"), "/plain");
     }
 
     #[test]
     fn extracts_path_from_full_url() {
-        assert_eq!(extract_path("https://api.x/users/1").as_deref(), Some("/users/1"));
+        assert_eq!(
+            extract_path("https://api.x/users/1").as_deref(),
+            Some("/users/1")
+        );
         assert_eq!(extract_path("/already").as_deref(), Some("/already"));
         assert_eq!(extract_path("${base}/u").as_deref(), Some("/u"));
         assert!(extract_path("nope").is_none());

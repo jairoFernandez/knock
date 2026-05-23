@@ -64,7 +64,12 @@ async fn path_params_match() {
 
 #[tokio::test]
 async fn bearer_auth_gate() {
-    let mut r = route("GET", "/secret", 200, ResponseBody::Text { text: "ok".into() });
+    let mut r = route(
+        "GET",
+        "/secret",
+        200,
+        ResponseBody::Text { text: "ok".into() },
+    );
     r.auth = Some("d".into());
     let spec = MockSpec::builder()
         .auth(AuthScheme::Bearer {
