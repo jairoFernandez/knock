@@ -2,3 +2,5 @@
 Cargo.lock
 .knock/
 *.local.toml
+docs/.DS_Store
+.DS_Store

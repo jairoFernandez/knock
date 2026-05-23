@@ -5,6 +5,8 @@
 
 HTTP client + workspace toolkit. Ships as a CLI (`knock`) and a Tauri desktop app (`Knock`).
 
+https://github.com/user-attachments/assets/040faf8b-1b0e-4e9a-8083-8d787347ab30
+
 Workspace layout:
 
 ```
