@@ -322,6 +322,9 @@ fn walk_all(base: &Path, dir: &Path, out: &mut Vec<FileEntry>) -> std::io::Resul
             }
             walk_all(base, &path, out)?;
         } else if path.is_file() {
+            if name_str.starts_with(".knock-") {
+                continue;
+            }
             let metadata = entry.metadata()?;
             let rel = path
                 .strip_prefix(base)

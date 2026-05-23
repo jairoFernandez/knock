@@ -412,7 +412,7 @@ export function App() {
     }
   }
 
-  const isRequest = selected?.startsWith("requests/") ?? false;
+  const isRequest = (selected?.startsWith("requests/") && selected.endsWith(".toml")) ?? false;
   const isOpenApi =
     selected === "openapi/spec.json" || selected === "openapi/spec.yaml";
   const [showOpenApiImport, setShowOpenApiImport] = useState(false);
