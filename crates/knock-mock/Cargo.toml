@@ -1,0 +1,21 @@
+[package]
+name = "knock-mock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Spin up a mock HTTP server from a declarative endpoint spec"
+repository.workspace = true
+
+[dependencies]
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "matched-path"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+jsonwebtoken = "9"
+rand = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }

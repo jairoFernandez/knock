@@ -1,4 +1,4 @@
-use crate::model::{Environment, Fragment, Request};
+use crate::model::{Environment, Fragment, Request, RequestMock};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +42,11 @@ pub fn parse_fragment(path: &Path) -> Result<Fragment, ParseError> {
 }
 
 pub fn parse_environment(path: &Path) -> Result<Environment, ParseError> {
+    let raw = read(path)?;
+    parse_toml(path, &raw)
+}
+
+pub fn parse_request_mock(path: &Path) -> Result<RequestMock, ParseError> {
     let raw = read(path)?;
     parse_toml(path, &raw)
 }

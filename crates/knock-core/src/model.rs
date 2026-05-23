@@ -8,6 +8,56 @@ pub struct WorkspaceConfig {
     pub default_env: Option<String>,
     pub color: Option<String>,
     pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mock: Option<MockConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MockConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_delay_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub global_headers: IndexMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auth: Vec<MockAuthEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MockAuthEntry {
+    Bearer {
+        name: String,
+        token: String,
+    },
+    ApiKey {
+        name: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        header: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+    },
+    Basic {
+        name: String,
+        user: String,
+        pass: String,
+    },
+    Jwt {
+        name: String,
+        secret: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pass: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ttl_secs: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -34,6 +84,32 @@ pub struct Request {
     pub body: Option<BodySpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openapi: Option<OpenApiMark>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mock: Option<RequestMock>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RequestMock {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub headers: IndexMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<MockBody>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MockBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

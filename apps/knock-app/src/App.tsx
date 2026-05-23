@@ -28,6 +28,7 @@ import { WorkspaceAppearanceModal } from "./WorkspaceAppearanceModal";
 import { Statusbar, SCALE_STEP, clampScale } from "./Statusbar";
 import { OpenApiImportModal } from "./OpenApiImportModal";
 import { OpenApiView } from "./OpenApiView";
+import { MockView } from "./MockView";
 import { BottomTerminalDock } from "./BottomTerminalDock";
 import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
 import type { DirEntryDto, RecentEntry } from "./types";
@@ -294,13 +295,15 @@ export function App() {
 
   async function refreshTree(root: string) {
     try {
-      const [list, dirList, colorMap, orderMap] = await Promise.all([
+      const [list, envList, dirList, colorMap, orderMap] = await Promise.all([
         invoke<TreeEntry[]>("list_tree", { root }),
+        invoke<string[]>("list_envs", { root }),
         invoke<DirEntryDto[]>("list_directories", { root }),
         invoke<Record<string, string>>("get_colors", { root }),
         invoke<Record<string, string[]>>("list_folder_orders", { root }),
       ]);
       setEntries(list);
+      setEnvs(envList);
       setDirectories(dirList.map((d) => d.rel));
       setColors(colorMap);
       setFolderOrders(orderMap);
@@ -1110,6 +1113,15 @@ export function App() {
             />
           </>
         )}
+        {projectMode === "mock" && globalMode === "requests" && workspace && (
+          <>
+            <div className="panel-header">Mock server</div>
+            <div className="mock-sidebar-hint">
+              Start a local HTTP server built from this workspace's requests.
+              Live request logs appear on the right.
+            </div>
+          </>
+        )}
         {globalMode === "kube" && (
           <>
             <div className="panel-header">Kubeconfigs</div>
@@ -1133,8 +1145,11 @@ export function App() {
             }}
           />
         )}
-        {globalMode === "requests" && !selected && <div className="empty">Select a request from the tree.</div>}
-        {globalMode === "requests" && selected && isRequest && form && (
+        {globalMode === "requests" && projectMode === "mock" && workspace && (
+          <MockView workspaceRoot={workspace.root} />
+        )}
+        {globalMode === "requests" && projectMode !== "mock" && !selected && <div className="empty">Select a request from the tree.</div>}
+        {globalMode === "requests" && projectMode !== "mock" && selected && isRequest && form && (
           <RequestEditor
             form={form}
             vars={varsRecord}
@@ -1143,7 +1158,7 @@ export function App() {
             onSend={runRequest}
           />
         )}
-        {globalMode === "requests" && selected && isOpenApi && workspace && (
+        {globalMode === "requests" && projectMode !== "mock" && selected && isOpenApi && workspace && (
           <OpenApiView
             root={workspace.root}
             rel={selected}
@@ -1152,7 +1167,7 @@ export function App() {
             onReimport={() => setShowOpenApiImport(true)}
           />
         )}
-        {globalMode === "requests" && selected && !isRequest && !isOpenApi && (
+        {globalMode === "requests" && projectMode !== "mock" && selected && !isRequest && !isOpenApi && (
           <>
             <div className="panel-header raw-header">
               <span>{selected}{rawDirty && <span className="dirty-mark"> •</span>}</span>

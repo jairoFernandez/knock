@@ -1,5 +1,6 @@
 pub mod commands;
 mod kubeconfig_cmd;
+mod mock_cmd;
 mod openapi_cmd;
 mod recents;
 mod terminal_cmd;
@@ -9,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use tauri::{Manager, RunEvent};
 
 use kubeconfig_cmd::TempCache;
+use mock_cmd::MockState;
 use terminal_cmd::TerminalSessions;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(TempCache::default())
         .manage(TerminalSessions::default())
+        .manage(MockState::default())
         .setup(|app| {
             sweep_stale_tmp_files();
             #[cfg(target_os = "macos")]
@@ -106,6 +109,13 @@ pub fn run() {
             updates_cmd::download_app_update,
             updates_cmd::install_app_update,
             updates_cmd::run_app_installer,
+            mock_cmd::mock_status,
+            mock_cmd::mock_preview,
+            mock_cmd::mock_start,
+            mock_cmd::mock_stop,
+            mock_cmd::mock_read_response,
+            mock_cmd::mock_save_response,
+            mock_cmd::mock_clear_response,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

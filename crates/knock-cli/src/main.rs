@@ -4,6 +4,8 @@ use knock_core::kubeconfigs;
 use knock_core::{execute, init_at, resolve, run_flow, Workspace};
 use std::path::PathBuf;
 
+use knock_mock_adapter as mock_adapter;
+
 #[derive(Parser)]
 #[command(
     name = "knock",
@@ -67,6 +69,27 @@ enum Cmd {
     Selfcmd {
         #[command(subcommand)]
         action: SelfCmd,
+    },
+    /// Spin up a mock HTTP server built from the workspace requests
+    Mock {
+        #[command(subcommand)]
+        action: MockCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum MockCmd {
+    /// Start the mock server (Ctrl-C to stop)
+    Serve {
+        /// Bind address (default 127.0.0.1)
+        #[arg(long)]
+        bind: Option<String>,
+        /// Port (defaults to [mock].port in knock.toml or 3000)
+        #[arg(long, short)]
+        port: Option<u16>,
+        /// Print the generated MockSpec as JSON and exit without serving
+        #[arg(long)]
+        dump: bool,
     },
 }
 
@@ -170,7 +193,46 @@ async fn main() -> Result<()> {
             SelfCmd::Check { refresh, json } => self_check(refresh, json).await,
             SelfCmd::Update { version, yes } => self_update(version.as_deref(), yes).await,
         },
+        Cmd::Mock { action } => match action {
+            MockCmd::Serve { bind, port, dump } => mock_serve(bind, port, dump).await,
+        },
     }
+}
+
+async fn mock_serve(bind: Option<String>, port: Option<u16>, dump: bool) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = Workspace::discover(&cwd).context("no knock workspace found from current dir")?;
+    let spec = mock_adapter::build(&ws)?;
+
+    if dump {
+        println!("{}", serde_json::to_string_pretty(&spec)?);
+        return Ok(());
+    }
+
+    let mock_cfg = ws.config.mock.as_ref();
+    let bind_host = bind
+        .or_else(|| mock_cfg.and_then(|c| c.bind.clone()))
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let bind_port = port
+        .or_else(|| mock_cfg.and_then(|c| c.port))
+        .unwrap_or(3000);
+    let addr: std::net::SocketAddr = format!("{bind_host}:{bind_port}")
+        .parse()
+        .with_context(|| format!("invalid bind address {bind_host}:{bind_port}"))?;
+
+    let route_count = spec.routes.len();
+    let handle = knock_mock::serve(spec, addr)
+        .await
+        .context("failed to start mock server")?;
+    eprintln!(
+        "knock mock listening on http://{} ({route_count} route(s))",
+        handle.addr
+    );
+    eprintln!("press Ctrl-C to stop");
+
+    tokio::signal::ctrl_c().await?;
+    eprintln!("\nshutting down");
+    handle.shutdown().await.map_err(anyhow::Error::from)
 }
 
 fn cli_current_version() -> String {

@@ -10,6 +10,8 @@ path = "src/main.rs"
 
 [dependencies]
 knock-core = { path = "../knock-core" }
+knock-mock = { path = "../knock-mock" }
+knock-mock-adapter = { path = "../knock-mock-adapter" }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -18,3 +20,4 @@ toml = { workspace = true }
 rpassword = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+indexmap = { workspace = true }

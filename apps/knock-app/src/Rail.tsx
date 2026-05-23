@@ -1,5 +1,5 @@
 export type GlobalRailMode = "requests" | "kube";
-export type ProjectRailMode = "workspace" | "files" | "git";
+export type ProjectRailMode = "workspace" | "files" | "git" | "mock";
 
 // Kept for backward compat; some legacy code may import it.
 export type RailMode = GlobalRailMode | ProjectRailMode;
@@ -63,10 +63,19 @@ const GLOBAL_ITEMS: { mode: GlobalRailMode; label: string; icon: JSX.Element }[]
   { mode: "kube", label: "Kubeconfigs", icon: KUBE_ICON },
 ];
 
+const MOCK_ICON = (
+  <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+    <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.4" fill="none" />
+    <path d="M10 6v4l3 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <circle cx="16" cy="4" r="2" fill="currentColor" />
+  </svg>
+);
+
 const PROJECT_ITEMS: { mode: ProjectRailMode; label: string; icon: JSX.Element }[] = [
   { mode: "workspace", label: "Workspace", icon: WORKSPACE_ICON },
   { mode: "files", label: "Files", icon: FILES_ICON },
   { mode: "git", label: "Git", icon: GIT_ICON },
+  { mode: "mock", label: "Mock server", icon: MOCK_ICON },
 ];
 
 interface GlobalProps {
