@@ -7,6 +7,7 @@ pub mod auth;
 pub mod faker;
 pub mod server;
 pub mod spec;
+pub mod tokens;
 
 pub use auth::{AuthError, AuthScheme, JwtIssuer};
 pub use faker::{FieldSchema, SchemaType};

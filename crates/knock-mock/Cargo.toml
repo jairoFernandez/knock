@@ -15,6 +15,9 @@ thiserror = { workspace = true }
 base64 = { workspace = true }
 jsonwebtoken = "9"
 rand = { workspace = true }
+regex = { workspace = true }
+fake = { version = "2.9", features = ["derive", "chrono"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 reqwest = { workspace = true }

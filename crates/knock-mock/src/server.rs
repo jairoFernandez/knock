@@ -1,6 +1,7 @@
 use crate::auth::{self, AuthRequest, AuthScheme, JwtIssuer};
 use crate::faker;
 use crate::spec::{MockSpec, ResponseBody, ResponseTemplate, Route};
+use crate::tokens;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode};
@@ -8,6 +9,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
 use axum::Router;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -264,17 +267,22 @@ fn render_response(t: &ResponseTemplate, global: &BTreeMap<String, String>) -> R
         builder = builder.header(k, v);
     }
 
+    let mut rng = StdRng::from_entropy();
     let (ct_default, body): (Option<&str>, Body) = match &t.body {
         ResponseBody::Empty => (None, Body::empty()),
-        ResponseBody::Text { text } => {
-            (Some("text/plain; charset=utf-8"), Body::from(text.clone()))
-        }
-        ResponseBody::Json { json } => (
-            Some("application/json"),
-            Body::from(serde_json::to_vec(json).unwrap_or_default()),
+        ResponseBody::Text { text } => (
+            Some("text/plain; charset=utf-8"),
+            Body::from(tokens::interpolate_str(text, &mut rng)),
         ),
+        ResponseBody::Json { json } => {
+            let interpolated = tokens::interpolate_value(json, &mut rng);
+            (
+                Some("application/json"),
+                Body::from(serde_json::to_vec(&interpolated).unwrap_or_default()),
+            )
+        }
         ResponseBody::Schema { schema } => {
-            let val = faker::generate(schema, 0);
+            let val = faker::generate(schema, rand::random());
             (
                 Some("application/json"),
                 Body::from(serde_json::to_vec(&val).unwrap_or_default()),

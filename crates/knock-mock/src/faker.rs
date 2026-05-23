@@ -1,3 +1,9 @@
+use fake::faker::address::en::{CityName, CountryName};
+use fake::faker::internet::en::{SafeEmail, Username};
+use fake::faker::lorem::en::{Sentence, Word};
+use fake::faker::name::en::{FirstName, LastName, Name};
+use fake::faker::phone_number::en::PhoneNumber;
+use fake::Fake;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -59,9 +65,18 @@ fn gen_inner(s: &FieldSchema, rng: &mut StdRng) -> Value {
     match s.ty {
         SchemaType::String => match s.format.as_deref() {
             Some("uuid") => Value::String(fake_uuid(rng)),
-            Some("email") => Value::String("user@example.com".into()),
-            Some("date-time") => Value::String("2026-01-01T00:00:00Z".into()),
-            Some("date") => Value::String("2026-01-01".into()),
+            Some("email") => Value::String(SafeEmail().fake_with_rng(rng)),
+            Some("date-time") => Value::String(chrono::Utc::now().to_rfc3339()),
+            Some("date") => Value::String(chrono::Utc::now().format("%Y-%m-%d").to_string()),
+            Some("first-name") => Value::String(FirstName().fake_with_rng(rng)),
+            Some("last-name") => Value::String(LastName().fake_with_rng(rng)),
+            Some("name") | Some("full-name") => Value::String(Name().fake_with_rng(rng)),
+            Some("username") => Value::String(Username().fake_with_rng(rng)),
+            Some("city") => Value::String(CityName().fake_with_rng(rng)),
+            Some("country") => Value::String(CountryName().fake_with_rng(rng)),
+            Some("phone") => Value::String(PhoneNumber().fake_with_rng(rng)),
+            Some("word") => Value::String(Word().fake_with_rng(rng)),
+            Some("sentence") => Value::String(Sentence(3..8).fake_with_rng(rng)),
             _ => Value::String("string".into()),
         },
         SchemaType::Integer => Value::from(rng.gen_range(0..1000)),
