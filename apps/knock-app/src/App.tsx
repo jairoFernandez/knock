@@ -638,11 +638,14 @@ export function App() {
   }
 
   const toolsCols = activeTool ? ` 4px ${toolsWidth}px 36px` : ` 36px`;
+  const isMockMode = globalMode === "requests" && projectMode === "mock";
   const appStyle: React.CSSProperties = {
     gridTemplateColumns:
       globalMode === "kube"
         ? `minmax(0, 1fr)${toolsCols}`
-        : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
+        : isMockMode
+          ? `44px 1fr 4px ${responseWidth}px${toolsCols}`
+          : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
   };
   if (terminalDockRows) {
     appStyle.gridTemplateRows = terminalDockRows;
@@ -855,6 +858,7 @@ export function App() {
         <ProjectRail mode={projectMode} onChange={setProjectMode} />
       )}
 
+      {!isMockMode && (<>
       <div className="panel sidebar">
         {projectMode === "workspace" && globalMode === "requests" && (
           <>
@@ -1113,15 +1117,6 @@ export function App() {
             />
           </>
         )}
-        {projectMode === "mock" && globalMode === "requests" && workspace && (
-          <>
-            <div className="panel-header">Mock server</div>
-            <div className="mock-sidebar-hint">
-              Start a local HTTP server built from this workspace's requests.
-              Live request logs appear on the right.
-            </div>
-          </>
-        )}
         {globalMode === "kube" && (
           <>
             <div className="panel-header">Kubeconfigs</div>
@@ -1135,6 +1130,7 @@ export function App() {
       <Splitter
         onDelta={(d) => setSidebarWidth(clampWidth(sidebarWidth + d, 180, 600))}
       />
+      </>)}
 
       <div className="panel editor-panel">
         {globalMode === "kube" && (
