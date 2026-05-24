@@ -13,7 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 rand = { workspace = true }
 regex = { workspace = true }
 fake = { version = "2.9", features = ["derive", "chrono"] }
