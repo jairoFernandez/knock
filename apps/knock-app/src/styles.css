@@ -4486,13 +4486,74 @@ textarea {
 }
 .mock-log-row {
   display: grid;
-  grid-template-columns: 90px 56px 1fr 50px 56px;
+  grid-template-columns: 14px 90px 56px 1fr 50px 56px;
   gap: 8px;
   align-items: center;
   padding: 3px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
 }
 .mock-log-row:hover { background: rgba(255, 255, 255, 0.03); }
+.mock-log-entry.open > .mock-log-row { background: rgba(120, 170, 255, 0.06); }
+.mock-log-chevron {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-align: center;
+}
+
+.mock-log-detail {
+  padding: 10px 12px 14px 34px;
+  background: rgba(255, 255, 255, 0.015);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mock-log-detail-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.mock-log-detail h4 {
+  margin: 6px 0 4px 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.mock-log-detail h4:first-child { margin-top: 0; }
+.mock-log-headers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mock-log-headers td {
+  padding: 1px 6px 1px 0;
+  vertical-align: top;
+  word-break: break-all;
+}
+.mock-log-headers td:first-child {
+  color: var(--text-faint);
+  white-space: nowrap;
+  width: 1%;
+}
+.mock-log-body {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--panel-2, #181922);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mock-log-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
 .mock-log-ts { color: var(--text-faint); font-size: 11px; }
 .mock-log-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mock-log-elapsed { color: var(--text-faint); text-align: right; font-size: 11px; }

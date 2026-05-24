@@ -51,6 +51,12 @@ interface LogEntry {
   status: number;
   elapsed_ms: number;
   remote: string | null;
+  req_headers?: Record<string, string>;
+  req_body?: string | null;
+  req_body_truncated?: boolean;
+  resp_headers?: Record<string, string>;
+  resp_body?: string | null;
+  resp_body_truncated?: boolean;
 }
 
 interface Props {
@@ -88,6 +94,7 @@ export function MockView({ workspaceRoot }: Props) {
   const [editorError, setEditorError] = useState<string | null>(null);
   const logsRef = useRef<HTMLDivElement | null>(null);
   const autoscrollRef = useRef(true);
+  const [expandedLog, setExpandedLog] = useState<number | null>(null);
   const [routesWidth, setRoutesWidth] = usePersistedNumber(
     "knock.mock.routesWidth",
     520,
@@ -577,25 +584,116 @@ export function MockView({ workspaceRoot }: Props) {
                   : "Start the server to capture requests."}
               </div>
             ) : (
-              filteredLogs.map((l, i) => (
-                <div key={`${l.ts_ms}-${i}`} className="mock-log-row">
-                  <span className="mock-log-ts">{fmtTs(l.ts_ms)}</span>
-                  <span className={`method method-${l.method.toLowerCase()}`}>
-                    {l.method}
-                  </span>
-                  <span className="mock-log-path">{l.path}</span>
-                  <span className={`mock-log-status status-${Math.floor(l.status / 100)}xx`}>
-                    {l.status}
-                  </span>
-                  <span className="mock-log-elapsed">{l.elapsed_ms}ms</span>
-                </div>
-              ))
+              filteredLogs.map((l, i) => {
+                const key = `${l.ts_ms}-${i}`;
+                const isOpen = expandedLog === l.ts_ms + i;
+                return (
+                  <div key={key} className={`mock-log-entry${isOpen ? " open" : ""}`}>
+                    <div
+                      className="mock-log-row"
+                      onClick={() =>
+                        setExpandedLog(isOpen ? null : l.ts_ms + i)
+                      }
+                    >
+                      <span className="mock-log-chevron">{isOpen ? "▾" : "▸"}</span>
+                      <span className="mock-log-ts">{fmtTs(l.ts_ms)}</span>
+                      <span className={`method method-${l.method.toLowerCase()}`}>
+                        {l.method}
+                      </span>
+                      <span className="mock-log-path">{l.path}</span>
+                      <span className={`mock-log-status status-${Math.floor(l.status / 100)}xx`}>
+                        {l.status}
+                      </span>
+                      <span className="mock-log-elapsed">{l.elapsed_ms}ms</span>
+                    </div>
+                    {isOpen && <LogDetail entry={l} />}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function LogDetail({ entry }: { entry: LogEntry }) {
+  const reqCt = headerValue(entry.req_headers, "content-type");
+  const respCt = headerValue(entry.resp_headers, "content-type");
+  return (
+    <div className="mock-log-detail">
+      <div className="mock-log-detail-cols">
+        <section>
+          <h4>Request headers</h4>
+          {renderHeaders(entry.req_headers)}
+          {entry.req_body != null && (
+            <>
+              <h4>
+                Request body
+                {entry.req_body_truncated ? " (truncated)" : ""}
+              </h4>
+              <pre className="mock-log-body">
+                {formatBody(entry.req_body, reqCt)}
+              </pre>
+            </>
+          )}
+        </section>
+        <section>
+          <h4>Response headers</h4>
+          {renderHeaders(entry.resp_headers)}
+          {entry.resp_body != null && (
+            <>
+              <h4>
+                Response body
+                {entry.resp_body_truncated ? " (truncated)" : ""}
+              </h4>
+              <pre className="mock-log-body">
+                {formatBody(entry.resp_body, respCt)}
+              </pre>
+            </>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function renderHeaders(h?: Record<string, string>) {
+  const entries = Object.entries(h ?? {});
+  if (entries.length === 0) return <div className="mock-log-empty">(none)</div>;
+  return (
+    <table className="mock-log-headers">
+      <tbody>
+        {entries.map(([k, v]) => (
+          <tr key={k}>
+            <td>{k}</td>
+            <td>{v}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function headerValue(h?: Record<string, string>, name?: string): string {
+  if (!h || !name) return "";
+  const target = name.toLowerCase();
+  for (const [k, v] of Object.entries(h)) {
+    if (k.toLowerCase() === target) return v;
+  }
+  return "";
+}
+
+function formatBody(body: string, contentType: string): string {
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      // fall through
+    }
+  }
+  return body;
 }
 
 function fmtTs(ms: number): string {

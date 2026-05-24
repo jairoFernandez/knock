@@ -27,7 +27,21 @@ pub struct LogEntry {
     pub status: u16,
     pub elapsed_ms: u64,
     pub remote: Option<String>,
+    #[serde(default)]
+    pub req_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub req_body: Option<String>,
+    #[serde(default)]
+    pub req_body_truncated: bool,
+    #[serde(default)]
+    pub resp_headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub resp_body: Option<String>,
+    #[serde(default)]
+    pub resp_body_truncated: bool,
 }
+
+const MAX_LOG_BODY_BYTES: usize = 64 * 1024;
 
 pub type LogSink = Arc<dyn Fn(LogEntry) + Send + Sync>;
 
@@ -115,23 +129,69 @@ async fn logging_middleware(
         .path_and_query()
         .map(|p| p.to_string())
         .unwrap_or_else(|| req.uri().path().to_string());
+    let req_headers = header_map_to_btree(req.headers());
+
+    let (parts, body) = req.into_parts();
+    let (req_body, req_body_truncated, req_bytes) = read_capped(body).await;
+    let req_for_next = Request::from_parts(parts, Body::from(req_bytes));
+
     let start = Instant::now();
-    let resp = next.run(req).await;
+    let resp = next.run(req_for_next).await;
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let ts_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+
+    let status = resp.status().as_u16();
+    let resp_headers = header_map_to_btree(resp.headers());
+    let (resp_parts, resp_body_obj) = resp.into_parts();
+    let (resp_body, resp_body_truncated, resp_bytes) = read_capped(resp_body_obj).await;
+
     let entry = LogEntry {
         ts_ms,
         method,
         path,
-        status: resp.status().as_u16(),
+        status,
         elapsed_ms,
         remote: None,
+        req_headers,
+        req_body,
+        req_body_truncated,
+        resp_headers,
+        resp_body,
+        resp_body_truncated,
     };
     sink(entry);
-    resp
+
+    Response::from_parts(resp_parts, Body::from(resp_bytes))
+}
+
+fn header_map_to_btree(map: &axum::http::HeaderMap) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (k, v) in map {
+        if let Ok(s) = v.to_str() {
+            out.insert(k.as_str().to_string(), s.to_string());
+        }
+    }
+    out
+}
+
+async fn read_capped(body: Body) -> (Option<String>, bool, Vec<u8>) {
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b.to_vec(),
+        Err(_) => return (None, false, Vec::new()),
+    };
+    if bytes.is_empty() {
+        return (None, false, bytes);
+    }
+    let (slice, truncated) = if bytes.len() > MAX_LOG_BODY_BYTES {
+        (&bytes[..MAX_LOG_BODY_BYTES], true)
+    } else {
+        (&bytes[..], false)
+    };
+    let text = std::str::from_utf8(slice).ok().map(|s| s.to_string());
+    (text, truncated, bytes)
 }
 
 pub fn build_router(spec: MockSpec) -> Result<Router, ServeError> {
