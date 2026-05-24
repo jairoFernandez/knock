@@ -4,5 +4,6 @@ build/
 .DS_Store
 .env
 *.log
+*.tsbuildinfo
 .idea/
 .vscode/
