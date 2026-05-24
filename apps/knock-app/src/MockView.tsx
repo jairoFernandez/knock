@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Splitter } from "./Splitter";
+import { usePersistedNumber } from "./hooks";
+
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
 
 interface MockStatus {
   running: boolean;
@@ -83,6 +88,14 @@ export function MockView({ workspaceRoot }: Props) {
   const [editorError, setEditorError] = useState<string | null>(null);
   const logsRef = useRef<HTMLDivElement | null>(null);
   const autoscrollRef = useRef(true);
+  const [routesWidth, setRoutesWidth] = usePersistedNumber(
+    "knock.mock.routesWidth",
+    520,
+  );
+  const [editorWidth, setEditorWidth] = usePersistedNumber(
+    "knock.mock.editorWidth",
+    420,
+  );
 
   const refreshStatus = async () => {
     try {
@@ -372,7 +385,10 @@ export function MockView({ workspaceRoot }: Props) {
       {previewError && <div className="mock-error">spec: {previewError}</div>}
 
       <div className="mock-body">
-        <div className="mock-routes">
+        <div
+          className="mock-routes"
+          style={{ width: routesWidth, flex: "0 0 auto" }}
+        >
           <div className="mock-section-header">
             Routes {preview ? `(${preview.routes.length})` : ""}
           </div>
@@ -426,8 +442,15 @@ export function MockView({ workspaceRoot }: Props) {
           )}
         </div>
 
+        <Splitter
+          onDelta={(d) => setRoutesWidth(clamp(routesWidth + d, 280, 900))}
+        />
+
         {selectedRel && (
-          <div className="mock-editor-pane">
+          <div
+            className="mock-editor-pane"
+            style={{ width: editorWidth, flex: "0 0 auto" }}
+          >
             <div className="mock-section-header mock-editor-header">
               <span>Response · {selectedRel}</span>
               <span className={`mock-editor-origin origin-${editorOrigin}`}>
@@ -517,7 +540,15 @@ export function MockView({ workspaceRoot }: Props) {
           </div>
         )}
 
-        <div className="mock-logs-pane">
+        {selectedRel && (
+          <Splitter
+            onDelta={(d) =>
+              setEditorWidth(clamp(editorWidth + d, 300, 700))
+            }
+          />
+        )}
+
+        <div className="mock-logs-pane" style={{ flex: "1 1 auto", minWidth: 0 }}>
           <div className="mock-section-header mock-logs-header">
             <span>Live requests ({filteredLogs.length})</span>
             <input

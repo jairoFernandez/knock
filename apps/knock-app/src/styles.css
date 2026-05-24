@@ -4402,10 +4402,11 @@ textarea {
 }
 
 .mock-body {
-  display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.4fr);
+  display: flex;
+  flex-direction: row;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .mock-routes,
@@ -4501,13 +4502,6 @@ textarea {
 .mock-log-status.status-4xx { color: #e8a13e; }
 .mock-log-status.status-5xx { color: #f08080; }
 
-.mock-body {
-  display: grid;
-  grid-template-columns: minmax(320px, 1fr) auto minmax(280px, 1.1fr);
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
 .mock-route-row { cursor: pointer; }
 .mock-route-row.selected { background: rgba(120, 170, 255, 0.08); }
 .mock-route-row:hover { background: rgba(255, 255, 255, 0.04); }
@@ -4531,9 +4525,6 @@ textarea {
 .mock-editor-pane {
   display: flex;
   flex-direction: column;
-  width: 420px;
-  min-width: 320px;
-  max-width: 540px;
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   background: var(--panel-2, #181922);
