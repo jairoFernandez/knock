@@ -58,7 +58,7 @@ async fn path_params_match() {
     let (base, handle) = boot(spec).await;
     let r = reqwest::get(format!("{base}/users/42")).await.unwrap();
     assert_eq!(r.status(), 200);
-    assert_eq!(r.text().await.unwrap(), "u");
+    assert_eq!(r.text().await.unwrap(), "u\n");
     handle.shutdown().await.unwrap();
 }
 

@@ -574,6 +574,7 @@ button.danger:hover:not(:disabled) {
   flex: 1;
 }
 .tree-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -585,6 +586,8 @@ button.danger:hover:not(:disabled) {
   user-select: none;
 }
 .tree-item .tree-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -613,6 +616,7 @@ button.danger:hover:not(:disabled) {
   color: var(--text-faint);
   font-size: 10px;
 }
+.tree-item.dir:hover .dir-count { visibility: hidden; }
 .tree-item.file:hover { background: var(--panel-2); }
 .tree-item.file.selected { background: var(--panel-3); color: var(--text); }
 .tree-item.file.selected::before {
@@ -646,14 +650,36 @@ button.danger:hover:not(:disabled) {
 .tree-delete:hover { background: rgba(227, 101, 114, 0.18); color: var(--err); }
 
 .tree-row-actions {
-  margin-left: auto;
-  margin-right: 8px;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 2px;
   align-items: center;
   opacity: 0;
+  pointer-events: none;
+  padding-left: 12px;
+  background: linear-gradient(
+    to right,
+    transparent 0,
+    var(--panel-2) 12px,
+    var(--panel-2) 100%
+  );
+  border-radius: 4px;
 }
-.tree-item:hover .tree-row-actions { opacity: 1; }
+.tree-item:hover .tree-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tree-item.file.selected:hover .tree-row-actions {
+  background: linear-gradient(
+    to right,
+    transparent 0,
+    var(--panel-3) 12px,
+    var(--panel-3) 100%
+  );
+}
 .tree-action {
   width: 18px;
   height: 18px;

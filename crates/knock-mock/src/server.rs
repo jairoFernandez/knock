@@ -270,23 +270,24 @@ fn render_response(t: &ResponseTemplate, global: &BTreeMap<String, String>) -> R
     let mut rng = StdRng::from_entropy();
     let (ct_default, body): (Option<&str>, Body) = match &t.body {
         ResponseBody::Empty => (None, Body::empty()),
-        ResponseBody::Text { text } => (
-            Some("text/plain; charset=utf-8"),
-            Body::from(tokens::interpolate_str(text, &mut rng)),
-        ),
+        ResponseBody::Text { text } => {
+            let mut s = tokens::interpolate_str(text, &mut rng);
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            (Some("text/plain; charset=utf-8"), Body::from(s))
+        }
         ResponseBody::Json { json } => {
             let interpolated = tokens::interpolate_value(json, &mut rng);
-            (
-                Some("application/json"),
-                Body::from(serde_json::to_vec(&interpolated).unwrap_or_default()),
-            )
+            let mut bytes = serde_json::to_vec(&interpolated).unwrap_or_default();
+            bytes.push(b'\n');
+            (Some("application/json"), Body::from(bytes))
         }
         ResponseBody::Schema { schema } => {
             let val = faker::generate(schema, rand::random());
-            (
-                Some("application/json"),
-                Body::from(serde_json::to_vec(&val).unwrap_or_default()),
-            )
+            let mut bytes = serde_json::to_vec(&val).unwrap_or_default();
+            bytes.push(b'\n');
+            (Some("application/json"), Body::from(bytes))
         }
     };
     if let Some(ct) = ct_default {
