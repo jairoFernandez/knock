@@ -487,6 +487,158 @@ fn default_shell() -> String {
     }
 }
 
+/// A shell the embedded PTY can launch. `id` is a stable key; the backend maps
+/// it to a concrete program + args in `shell_command`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellInfo {
+    pub id: String,
+    pub label: String,
+    pub available: bool,
+}
+
+#[cfg(windows)]
+fn windows_git_bash() -> Option<PathBuf> {
+    // git-bash ships bash.exe under <Git>\bin\bash.exe. Probe PATH then the
+    // standard install locations.
+    if let Some(p) = which_win("bash.exe") {
+        return Some(p);
+    }
+    for base in [
+        std::env::var("ProgramFiles").ok(),
+        std::env::var("ProgramFiles(x86)").ok(),
+        std::env::var("LocalAppData").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let p = PathBuf::from(base).join("Git").join("bin").join("bash.exe");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+const WINDOWS_SHELLS: &[(&str, &str)] = &[
+    ("cmd", "Command Prompt"),
+    ("powershell", "Windows PowerShell"),
+    ("pwsh", "PowerShell 7"),
+    ("git-bash", "Git Bash"),
+    ("wsl", "WSL"),
+];
+
+#[cfg(unix)]
+const UNIX_SHELLS: &[(&str, &str)] = &[
+    ("zsh", "zsh"),
+    ("bash", "bash"),
+    ("fish", "fish"),
+];
+
+fn shell_available(id: &str) -> bool {
+    #[cfg(windows)]
+    {
+        match id {
+            "cmd" => true,
+            "powershell" => which_win("powershell.exe").is_some(),
+            "pwsh" => which_win("pwsh.exe").is_some(),
+            "git-bash" => windows_git_bash().is_some(),
+            "wsl" => which_win("wsl.exe").is_some(),
+            _ => false,
+        }
+    }
+    #[cfg(unix)]
+    {
+        // Probe both common bin dirs without requiring `which`.
+        let candidates = [
+            format!("/bin/{id}"),
+            format!("/usr/bin/{id}"),
+            format!("/usr/local/bin/{id}"),
+            format!("/opt/homebrew/bin/{id}"),
+        ];
+        candidates.iter().any(|p| Path::new(p).exists())
+    }
+}
+
+#[tauri::command]
+pub fn terminal_list_shells() -> Vec<ShellInfo> {
+    let mut out = vec![ShellInfo {
+        id: "auto".to_string(),
+        label: "Default shell".to_string(),
+        available: true,
+    }];
+    #[cfg(windows)]
+    {
+        for (id, label) in WINDOWS_SHELLS {
+            out.push(ShellInfo {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                available: shell_available(id),
+            });
+        }
+    }
+    #[cfg(unix)]
+    {
+        for (id, label) in UNIX_SHELLS {
+            out.push(ShellInfo {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                available: shell_available(id),
+            });
+        }
+    }
+    out
+}
+
+/// Build the `(program, args)` for a requested shell id. Falls back to the
+/// platform default when `id` is "auto"/empty/unknown or the shell is missing.
+fn shell_command(id: &str) -> (String, Vec<String>) {
+    let id = id.trim();
+    #[cfg(windows)]
+    {
+        match id {
+            "powershell" if shell_available("powershell") => (
+                "powershell.exe".to_string(),
+                vec!["-NoLogo".to_string()],
+            ),
+            "pwsh" if shell_available("pwsh") => {
+                ("pwsh.exe".to_string(), vec!["-NoLogo".to_string()])
+            }
+            "git-bash" => {
+                if let Some(bash) = windows_git_bash() {
+                    return (bash.to_string_lossy().to_string(), vec!["-l".to_string()]);
+                }
+                (default_shell(), vec![])
+            }
+            "wsl" if shell_available("wsl") => ("wsl.exe".to_string(), vec![]),
+            "cmd" => (
+                std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
+                vec![],
+            ),
+            _ => (default_shell(), vec![]),
+        }
+    }
+    #[cfg(unix)]
+    {
+        let login = vec!["-l".to_string()];
+        match id {
+            "zsh" if shell_available("zsh") => ("zsh".to_string(), login),
+            "bash" if shell_available("bash") => ("bash".to_string(), login),
+            "fish" if shell_available("fish") => ("fish".to_string(), vec!["-l".to_string()]),
+            _ => {
+                let sh = default_shell();
+                let args = if sh.ends_with("zsh") || sh.ends_with("bash") {
+                    vec!["-l".to_string()]
+                } else {
+                    vec![]
+                };
+                (sh, args)
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn terminal_spawn(
     app: AppHandle,
@@ -498,6 +650,7 @@ pub fn terminal_spawn(
     cwd: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
+    shell: Option<String>,
 ) -> Result<String, String> {
     let kubeconfig_path = if let Some(name) = name.filter(|s| !s.is_empty()) {
         let project = project_or_default(project);
@@ -517,13 +670,21 @@ pub fn terminal_spawn(
         })
         .map_err(|e| e.to_string())?;
 
-    let shell = default_shell();
-    let mut cmd = CommandBuilder::new(&shell);
-    #[cfg(unix)]
-    {
-        if shell.ends_with("zsh") || shell.ends_with("bash") {
-            cmd.arg("-l");
-        }
+    // Explicit `shell` wins; otherwise fall back to the persisted preference.
+    let shell_id = shell
+        .filter(|s| !s.is_empty() && s != "auto")
+        .or_else(|| {
+            kubeconfigs::default_store_dir()
+                .ok()
+                .and_then(|dir| kubeconfigs::read_settings(&dir).ok())
+                .map(|s| s.preferred_shell)
+                .filter(|s| !s.is_empty() && s != "auto")
+        })
+        .unwrap_or_else(|| "auto".to_string());
+    let (program, args) = shell_command(&shell_id);
+    let mut cmd = CommandBuilder::new(&program);
+    for a in &args {
+        cmd.arg(a);
     }
     if let Some(kubeconfig_path) = kubeconfig_path {
         cmd.env("KUBECONFIG", &kubeconfig_path);
@@ -567,12 +728,31 @@ pub fn terminal_spawn(
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) => break, // EOF: PTY closed, process tree exited
                 Ok(n) => {
                     let chunk = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
                     let _ = app_for_reader.emit(&event_name, chunk);
                 }
-                Err(_) => break,
+                // Transient errors must NOT kill the stream. On Windows ConPTY a
+                // chatty process (e.g. `next start` flooding logs) can surface
+                // Interrupted/WouldBlock/spurious errors mid-stream; breaking here
+                // froze the terminal. Retry on those; only a true disconnect ends it.
+                Err(e) => match e.kind() {
+                    std::io::ErrorKind::Interrupted => continue,
+                    std::io::ErrorKind::WouldBlock => {
+                        // Reader is blocking by default; if the OS ever returns
+                        // this, sleep to avoid a busy spin.
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof => break,
+                    _ => {
+                        // Unknown error: yield briefly and retry rather than
+                        // tearing down a live session.
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
+                },
             }
         }
         let _ = app_for_reader.emit(&exit_event, ());

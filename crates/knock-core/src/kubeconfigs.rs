@@ -56,17 +56,26 @@ pub struct KubeEntryMeta {
 pub struct KubeconfigSettings {
     #[serde(default = "default_preferred_terminal")]
     pub preferred_terminal: String,
+    /// Embedded-PTY shell id (cmd/powershell/pwsh/git-bash/wsl/zsh/bash/fish),
+    /// or "auto" for the platform default.
+    #[serde(default = "default_preferred_shell")]
+    pub preferred_shell: String,
 }
 
 impl Default for KubeconfigSettings {
     fn default() -> Self {
         Self {
             preferred_terminal: default_preferred_terminal(),
+            preferred_shell: default_preferred_shell(),
         }
     }
 }
 
 fn default_preferred_terminal() -> String {
+    "auto".to_string()
+}
+
+fn default_preferred_shell() -> String {
     "auto".to_string()
 }
 
@@ -612,6 +621,7 @@ mod tests {
             d.path(),
             &KubeconfigSettings {
                 preferred_terminal: "iterm".to_string(),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -626,6 +636,7 @@ mod tests {
             d.path(),
             &KubeconfigSettings {
                 preferred_terminal: "warp".to_string(),
+                ..Default::default()
             },
         )
         .unwrap();

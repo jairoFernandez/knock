@@ -35,6 +35,14 @@ export interface KubeTerminalSpawnArgs {
   passphrase: string | null;
   cwd?: string | null;
   title?: string | null;
+  /** Shell id (cmd/powershell/pwsh/git-bash/wsl/zsh/bash/fish), or "auto". */
+  shell?: string | null;
+}
+
+export interface ShellInfo {
+  id: string;
+  label: string;
+  available: boolean;
 }
 
 export interface TerminalEntry {
@@ -43,6 +51,7 @@ export interface TerminalEntry {
   project: string | null; // kubeconfig project, null for a plain shell
   encrypted: boolean;
   cwd: string | null;
+  shell: string | null;       // shell id, "auto" => backend default
   sessionId: string | null;   // backend session id (null until spawned)
   term: Terminal;
   fit: FitAddon;
@@ -147,7 +156,9 @@ class Store {
     return tabId;
   }
 
-  async openGeneralTab(args: { cwd?: string | null; title?: string | null } = {}): Promise<string> {
+  async openGeneralTab(
+    args: { cwd?: string | null; title?: string | null; shell?: string | null } = {},
+  ): Promise<string> {
     return this.openNewTab({
       name: null,
       project: null,
@@ -155,6 +166,7 @@ class Store {
       passphrase: null,
       cwd: args.cwd ?? null,
       title: args.title ?? "Shell",
+      shell: args.shell ?? null,
     });
   }
 
@@ -174,6 +186,7 @@ class Store {
       passphrase: null,
       cwd: src.cwd,
       title: src.name ? src.title : "Shell",
+      shell: src.shell,
     });
   }
 
@@ -193,6 +206,7 @@ class Store {
       passphrase: null, // temp file is already cached after the first spawn
       cwd: src.cwd,
       title: src.name ? undefined : "Shell",
+      shell: src.shell,
     });
     tab.layout = replaceLeaf(tab.layout, tab.activeLeaf, {
       kind: "split",
@@ -267,6 +281,7 @@ class Store {
     passphrase: string | null;
     cwd?: string | null;
     title?: string | null;
+    shell?: string | null;
     color?: string;
   }): TerminalEntry {
     const id = `term-${cryptoRandom()}`;
@@ -296,6 +311,7 @@ class Store {
       project: args.project ?? null,
       encrypted: args.encrypted ?? false,
       cwd: args.cwd ?? null,
+      shell: args.shell ?? null,
       sessionId: null,
       term,
       fit,
@@ -389,6 +405,7 @@ class Store {
         cwd: entry.cwd,
         cols: entry.term.cols || 80,
         rows: entry.term.rows || 24,
+        shell: entry.shell ?? "auto",
       });
       entry.sessionId = sessionId;
 
@@ -485,6 +502,18 @@ class Store {
 }
 
 export const terminalStore = new Store();
+
+/** List the shells the embedded PTY can launch on this OS. Cached after first call. */
+let shellsCache: ShellInfo[] | null = null;
+export async function listShells(): Promise<ShellInfo[]> {
+  if (shellsCache) return shellsCache;
+  try {
+    shellsCache = await invoke<ShellInfo[]>("terminal_list_shells");
+  } catch {
+    shellsCache = [{ id: "auto", label: "Default shell", available: true }];
+  }
+  return shellsCache;
+}
 
 // -------- Pane tree helpers --------
 

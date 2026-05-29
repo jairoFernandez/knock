@@ -1981,6 +1981,54 @@ button.danger:hover:not(:disabled) {
   gap: 6px;
 }
 
+/* Split "Shell" button + shell-picker dropdown. */
+.bottom-terminal-new-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.bottom-terminal-new-group .bottom-terminal-new {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.bottom-terminal-actions .bottom-terminal-new-caret {
+  width: 18px;
+  min-width: 18px;
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.bottom-terminal-shell-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--panel, #1a1d23);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.bottom-terminal-actions .bottom-terminal-shell-item {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.bottom-terminal-actions .bottom-terminal-shell-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .kube-subtle {
   font-size: 11px;
   opacity: 0.6;

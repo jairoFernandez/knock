@@ -1,6 +1,12 @@
+import { useEffect, useRef, useState } from "react";
 import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
-import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
+import {
+  listShells,
+  terminalStore,
+  type KubeTerminalSpawnArgs,
+  type ShellInfo,
+} from "./kubeTerminalStore";
 
 interface Props {
   spawnArgs: KubeTerminalSpawnArgs | null;
@@ -48,14 +54,37 @@ export function BottomTerminalDock({
     onDelta: (delta) => onHeightDelta(-delta),
   });
 
-  async function openNewShell() {
+  const [shells, setShells] = useState<ShellInfo[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void listShells().then(setShells);
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(ev: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen]);
+
+  async function openNewShell(shell?: string) {
     if (spawnArgs) {
-      await terminalStore.openNewTab(spawnArgs);
+      await terminalStore.openNewTab({ ...spawnArgs, shell: shell ?? spawnArgs.shell ?? null });
     } else {
-      await terminalStore.openGeneralTab();
+      await terminalStore.openGeneralTab({ shell: shell ?? null });
     }
     onExpandedChange(true);
   }
+
+  // Only offer the picker when there's more than the default + at least one
+  // concrete shell is detected.
+  const pickable = shells.filter((s) => s.id !== "auto" && s.available);
 
   return (
     <section
@@ -78,23 +107,56 @@ export function BottomTerminalDock({
         onTabSelected={() => onExpandedChange(true)}
         toolbar={
           <div className="bottom-terminal-actions">
-            <button
-              className="bottom-terminal-new"
-              title={
-                spawnArgs
-                  ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
-                  : "New plain shell"
-              }
-              onClick={() => {
-                void openNewShell();
-              }}
-            >
-              <DockIcon size={13}>
-                <path d="M8 3v10" />
-                <path d="M3 8h10" />
-              </DockIcon>
-              <span>Shell</span>
-            </button>
+            <div className="bottom-terminal-new-group" ref={menuRef}>
+              <button
+                className="bottom-terminal-new"
+                title={
+                  spawnArgs
+                    ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
+                    : "New plain shell"
+                }
+                onClick={() => {
+                  void openNewShell();
+                }}
+              >
+                <DockIcon size={13}>
+                  <path d="M8 3v10" />
+                  <path d="M3 8h10" />
+                </DockIcon>
+                <span>Shell</span>
+              </button>
+              {pickable.length > 0 && (
+                <button
+                  className="bottom-terminal-new-caret"
+                  title="Choose shell"
+                  aria-label="Choose shell"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  <DockIcon size={11}>
+                    <path d="M4 6.5 8 10l4-3.5" />
+                  </DockIcon>
+                </button>
+              )}
+              {menuOpen && pickable.length > 0 && (
+                <div className="bottom-terminal-shell-menu" role="menu">
+                  {pickable.map((s) => (
+                    <button
+                      key={s.id}
+                      role="menuitem"
+                      className="bottom-terminal-shell-item"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void openNewShell(s.id);
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               className="bottom-terminal-icon"
               title={expanded ? "Collapse terminal" : "Open terminal"}

@@ -3,7 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { KubeconfigEditor } from "./KubeconfigEditor";
 import { highlightYaml } from "./yamlHighlight";
-import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
+import {
+  listShells,
+  terminalStore,
+  type KubeTerminalSpawnArgs,
+  type ShellInfo,
+} from "./kubeTerminalStore";
 
 const DEFAULT_PROJECT = "default";
 
@@ -64,6 +69,8 @@ export function KubeconfigsView({
   }
   const [preferredTerminal, setPreferredTerminal] = useState<string>("auto");
   const [terminals, setTerminals] = useState<TerminalInfo[]>([]);
+  const [preferredShell, setPreferredShell] = useState<string>("auto");
+  const [shells, setShells] = useState<ShellInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -81,10 +88,14 @@ export function KubeconfigsView({
 
   const loadSettings = useCallback(async () => {
     try {
-      const s = await invoke<{ preferredTerminal: string }>("kubeconfig_settings_get");
+      const s = await invoke<{ preferredTerminal: string; preferredShell: string }>(
+        "kubeconfig_settings_get",
+      );
       setPreferredTerminal(s.preferredTerminal || "auto");
+      setPreferredShell(s.preferredShell || "auto");
       const t = await invoke<TerminalInfo[]>("kubeconfig_list_terminals");
       setTerminals(t);
+      setShells(await listShells());
     } catch (e) {
       // non-fatal — settings file may not exist yet
       console.warn("kubeconfig settings load:", e);
@@ -100,6 +111,15 @@ export function KubeconfigsView({
     setPreferredTerminal(id);
     try {
       await invoke("kubeconfig_settings_set", { preferredTerminal: id });
+    } catch (e) {
+      setStatus({ kind: "error", text: String(e) });
+    }
+  }
+
+  async function changePreferredShell(id: string) {
+    setPreferredShell(id);
+    try {
+      await invoke("kubeconfig_settings_set", { preferredShell: id });
     } catch (e) {
       setStatus({ kind: "error", text: String(e) });
     }
@@ -185,6 +205,21 @@ export function KubeconfigsView({
                       <option key={t.id} value={t.id} disabled={!t.available}>
                         {t.label}
                         {!t.available ? " (not found)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="kube-settings-row">
+                  <label className="kube-label">Embedded shell</label>
+                  <select
+                    className="kube-input"
+                    value={preferredShell}
+                    onChange={(e) => changePreferredShell(e.target.value)}
+                  >
+                    {shells.map((s) => (
+                      <option key={s.id} value={s.id} disabled={!s.available}>
+                        {s.label}
+                        {!s.available ? " (not found)" : ""}
                       </option>
                     ))}
                   </select>
