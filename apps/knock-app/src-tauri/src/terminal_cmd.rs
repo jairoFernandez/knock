@@ -530,11 +530,7 @@ const WINDOWS_SHELLS: &[(&str, &str)] = &[
 ];
 
 #[cfg(unix)]
-const UNIX_SHELLS: &[(&str, &str)] = &[
-    ("zsh", "zsh"),
-    ("bash", "bash"),
-    ("fish", "fish"),
-];
+const UNIX_SHELLS: &[(&str, &str)] = &[("zsh", "zsh"), ("bash", "bash"), ("fish", "fish")];
 
 fn shell_available(id: &str) -> bool {
     #[cfg(windows)]
@@ -598,10 +594,9 @@ fn shell_command(id: &str) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
         match id {
-            "powershell" if shell_available("powershell") => (
-                "powershell.exe".to_string(),
-                vec!["-NoLogo".to_string()],
-            ),
+            "powershell" if shell_available("powershell") => {
+                ("powershell.exe".to_string(), vec!["-NoLogo".to_string()])
+            }
             "pwsh" if shell_available("pwsh") => {
                 ("pwsh.exe".to_string(), vec!["-NoLogo".to_string()])
             }
