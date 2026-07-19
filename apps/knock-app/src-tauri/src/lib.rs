@@ -101,6 +101,7 @@ pub fn run() {
             kubeconfig_cmd::kubeconfig_settings_set,
             terminal_cmd::kubeconfig_list_terminals,
             terminal_cmd::kubeconfig_open_terminal,
+            terminal_cmd::terminal_list_shells,
             terminal_cmd::terminal_spawn,
             terminal_cmd::terminal_write,
             terminal_cmd::terminal_resize,

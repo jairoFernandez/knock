@@ -19,6 +19,7 @@ pub struct KubeEntryDto {
 #[serde(rename_all = "camelCase")]
 pub struct KubeSettingsDto {
     pub preferred_terminal: String,
+    pub preferred_shell: String,
 }
 
 /// Cache of decrypted temp paths (and launcher scripts).
@@ -225,15 +226,24 @@ pub fn kubeconfig_settings_get() -> Result<KubeSettingsDto, String> {
     let s = kubeconfigs::read_settings(&dir).map_err(map_err)?;
     Ok(KubeSettingsDto {
         preferred_terminal: s.preferred_terminal,
+        preferred_shell: s.preferred_shell,
     })
 }
 
 #[tauri::command]
-pub fn kubeconfig_settings_set(preferred_terminal: String) -> Result<(), String> {
+pub fn kubeconfig_settings_set(
+    preferred_terminal: Option<String>,
+    preferred_shell: Option<String>,
+) -> Result<(), String> {
     let dir = kubeconfigs::default_store_dir().map_err(map_err)?;
-    kubeconfigs::write_settings(
-        &dir,
-        &kubeconfigs::KubeconfigSettings { preferred_terminal },
-    )
-    .map_err(map_err)
+    // Merge over the stored settings so a caller can update one field without
+    // clobbering the other.
+    let mut s = kubeconfigs::read_settings(&dir).map_err(map_err)?;
+    if let Some(t) = preferred_terminal {
+        s.preferred_terminal = t;
+    }
+    if let Some(sh) = preferred_shell {
+        s.preferred_shell = sh;
+    }
+    kubeconfigs::write_settings(&dir, &s).map_err(map_err)
 }
