@@ -173,18 +173,22 @@ jobs:
             target: x86_64-apple-darwin
             os_name: macos
             arch: x86_64
+            bundle_args: ""
           - runner: macos-14
             target: aarch64-apple-darwin
             os_name: macos
             arch: aarch64
+            bundle_args: "--bundles app"
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             os_name: linux
             arch: x86_64
+            bundle_args: ""
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             os_name: windows
             arch: x86_64
+            bundle_args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -239,4 +243,4 @@ jobs:
           releaseName: ${{ needs.create-release.outputs.tag }}
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} ${{ matrix.bundle_args }}
