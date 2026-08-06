@@ -173,22 +173,18 @@ jobs:
             target: x86_64-apple-darwin
             os_name: macos
             arch: x86_64
-            bundle_args: ""
           - runner: macos-14
             target: aarch64-apple-darwin
             os_name: macos
             arch: aarch64
-            bundle_args: "--bundles app"
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             os_name: linux
             arch: x86_64
-            bundle_args: ""
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             os_name: windows
             arch: x86_64
-            bundle_args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -229,6 +225,14 @@ jobs:
         shell: bash
         run: ./scripts/set-version.sh ${{ needs.create-release.outputs.tag }}
 
+      # XProtect's behavioral scan grabs freshly created DMGs on GitHub macOS
+      # runners, making hdiutil fail with "Resource busy" (actions/runner-images#7522).
+      - name: Stop XProtect to avoid flaky DMG bundling
+        if: matrix.os_name == 'macos'
+        run: |
+          sudo pkill -9 XProtect >/dev/null 2>&1 || true
+          while pgrep -q XProtect; do sleep 3; done
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -243,4 +247,4 @@ jobs:
           releaseName: ${{ needs.create-release.outputs.tag }}
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }} ${{ matrix.bundle_args }}
+          args: --target ${{ matrix.target }} ${{ matrix.os_name == 'macos' && '--verbose' || '' }}
