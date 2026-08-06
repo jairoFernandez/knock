@@ -86,7 +86,15 @@ fn which(prog: &str) -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn which_win(prog: &str) -> Option<PathBuf> {
-    let out = Command::new("where").arg(prog).output().ok()?;
+    // CREATE_NO_WINDOW: without it every probe flashes a console window in a
+    // windows_subsystem = "windows" build.
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = Command::new("where")
+        .arg(prog)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -634,8 +642,11 @@ fn shell_command(id: &str) -> (String, Vec<String>) {
     }
 }
 
+// Terminal commands are async so they run on Tauri's async runtime instead of
+// the main thread: ConPTY spawn/write/resize can block, and blocking the main
+// thread freezes the whole window on Windows.
 #[tauri::command]
-pub fn terminal_spawn(
+pub async fn terminal_spawn(
     app: AppHandle,
     cache: State<'_, TempCache>,
     sessions: State<'_, TerminalSessions>,
@@ -760,7 +771,7 @@ pub fn terminal_spawn(
 }
 
 #[tauri::command]
-pub fn terminal_write(
+pub async fn terminal_write(
     sessions: State<'_, TerminalSessions>,
     session_id: String,
     data: String,
@@ -775,7 +786,7 @@ pub fn terminal_write(
 }
 
 #[tauri::command]
-pub fn terminal_resize(
+pub async fn terminal_resize(
     sessions: State<'_, TerminalSessions>,
     session_id: String,
     cols: u16,
@@ -797,7 +808,7 @@ pub fn terminal_resize(
 }
 
 #[tauri::command]
-pub fn terminal_kill(
+pub async fn terminal_kill(
     sessions: State<'_, TerminalSessions>,
     session_id: String,
 ) -> Result<(), String> {
