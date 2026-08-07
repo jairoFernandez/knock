@@ -480,6 +480,23 @@ class Store {
     const entry = this.terminals.get(termId);
     if (!entry) return;
     entry.title = title;
+    // Keep single-leaf tab labels in sync with their terminal's title.
+    for (const tab of this.tabs) {
+      if (tab.layout.kind === "leaf" && tab.layout.termId === termId) {
+        tab.label = title;
+      }
+    }
+    this.emit();
+  }
+
+  renameTab(tabId: string, label: string) {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    tab.label = label;
+    if (tab.layout.kind === "leaf") {
+      const entry = this.terminals.get(tab.layout.termId);
+      if (entry) entry.title = label;
+    }
     this.emit();
   }
 
@@ -498,6 +515,29 @@ class Store {
     } catch {
       /* no-op */
     }
+  }
+
+  /** Cycle pane focus within the active tab. delta: +1 next, -1 previous. */
+  focusRelativeLeaf(delta: number) {
+    const tab = this.getActiveTab();
+    if (!tab) return;
+    const leaves = collectLeaves(tab.layout);
+    if (leaves.length < 2) return;
+    const idx = leaves.findIndex((l) => l.termId === tab.activeLeaf);
+    const next = leaves[(idx + delta + leaves.length) % leaves.length];
+    tab.activeLeaf = next.termId;
+    this.emit();
+    this.focusLeaf(next.termId);
+  }
+
+  /** Cycle between terminal tabs. delta: +1 next, -1 previous. */
+  focusRelativeTab(delta: number) {
+    if (this.tabs.length < 2) return;
+    const idx = this.tabs.findIndex((t) => t.id === this.activeTabId);
+    const next = this.tabs[(idx + delta + this.tabs.length) % this.tabs.length];
+    this.activeTabId = next.id;
+    this.emit();
+    this.focusLeaf(next.activeLeaf);
   }
 }
 

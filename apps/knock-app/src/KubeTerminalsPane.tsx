@@ -45,16 +45,20 @@ interface PaneViewProps {
   tabId: string;
   path: number[];
   activeLeaf: string;
+  /** True when the tab holds more than one leaf (splits). */
+  multi: boolean;
 }
 
 function LeafView({
   termId,
   tabId,
   isActive,
+  multi,
 }: {
   termId: string;
   tabId: string;
   isActive: boolean;
+  multi: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const entry = terminalStore.terminals.get(termId);
@@ -86,11 +90,11 @@ function LeafView({
 
   return (
     <div
-      className={`kube-leaf ${isActive ? "active" : ""}`}
+      className={`kube-leaf ${isActive ? "active" : ""} ${multi ? "multi" : ""}`}
       style={{ "--leaf-color": entry.color } as React.CSSProperties}
       onMouseDown={() => terminalStore.setLeafActive(tabId, termId)}
     >
-      <LeafHeader entry={entry} tabId={tabId} />
+      {multi && <LeafHeader entry={entry} tabId={tabId} />}
       <div ref={hostRef} className="kube-leaf-host" />
     </div>
   );
@@ -222,10 +226,15 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
   );
 }
 
-function PaneView({ pane, tabId, path, activeLeaf }: PaneViewProps) {
+function PaneView({ pane, tabId, path, activeLeaf, multi }: PaneViewProps) {
   if (pane.kind === "leaf") {
     return (
-      <LeafView termId={pane.termId} tabId={tabId} isActive={pane.termId === activeLeaf} />
+      <LeafView
+        termId={pane.termId}
+        tabId={tabId}
+        isActive={pane.termId === activeLeaf}
+        multi={multi}
+      />
     );
   }
   const isH = pane.orientation === "h";
@@ -240,6 +249,7 @@ function PaneView({ pane, tabId, path, activeLeaf }: PaneViewProps) {
           tabId={tabId}
           path={[...path, 0]}
           activeLeaf={activeLeaf}
+          multi={multi}
         />
       }
       b={
@@ -248,6 +258,7 @@ function PaneView({ pane, tabId, path, activeLeaf }: PaneViewProps) {
           tabId={tabId}
           path={[...path, 1]}
           activeLeaf={activeLeaf}
+          multi={multi}
         />
       }
       isH={isH}
@@ -325,6 +336,88 @@ interface Props {
   onTabSelected?: () => void;
 }
 
+function TabButton({
+  tab,
+  active,
+  onSelect,
+}: {
+  tab: { id: string; label: string; layout: Pane };
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(tab.label);
+  const leaves = collectLeaves(tab.layout);
+  const multi = leaves.length > 1;
+  const colors = leaves
+    .map((l) => terminalStore.terminals.get(l.termId)?.color)
+    .filter(Boolean) as string[];
+
+  function commit() {
+    const v = draft.trim();
+    if (v) terminalStore.renameTab(tab.id, v);
+    setEditing(false);
+  }
+
+  return (
+    <button
+      className={`kube-terms-tab ${active ? "active" : ""}`}
+      onClick={onSelect}
+      onDoubleClick={() => {
+        setDraft(tab.label);
+        setEditing(true);
+      }}
+      title={editing ? undefined : `${tab.label} — double-click to rename`}
+    >
+      <span className="kube-terms-tab-colors">
+        {(multi ? colors.slice(0, 3) : colors.slice(0, 1)).map((c, i) => (
+          <span key={i} className="kube-terms-tab-dot" style={{ background: c }} />
+        ))}
+      </span>
+      {editing ? (
+        <input
+          className="kube-terms-tab-input"
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            else if (e.key === "Escape") setEditing(false);
+          }}
+        />
+      ) : (
+        <span className="kube-terms-tab-label">{tab.label}</span>
+      )}
+      {multi && <span className="kube-terms-tab-count">{leaves.length}</span>}
+      <span
+        className="kube-terms-tab-close"
+        role="button"
+        tabIndex={0}
+        title="Close terminal tab"
+        aria-label="Close terminal tab"
+        onClick={(e) => {
+          e.stopPropagation();
+          terminalStore.closeTab(tab.id);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            terminalStore.closeTab(tab.id);
+          }
+        }}
+      >
+        <ShellControlIcon size={11}>
+          <path d="M4.5 4.5l7 7" />
+          <path d="M11.5 4.5l-7 7" />
+        </ShellControlIcon>
+      </span>
+    </button>
+  );
+}
+
 export function KubeTerminalsPane({
   spawnArgs,
   bodyCollapsed = false,
@@ -350,54 +443,17 @@ export function KubeTerminalsPane({
   return (
     <div className="kube-terms">
       <div className="kube-terms-tabs">
-        {tabs.map((tab) => {
-          const leaves = collectLeaves(tab.layout);
-          const colors = leaves
-            .map((l) => terminalStore.terminals.get(l.termId)?.color)
-            .filter(Boolean) as string[];
-          return (
-            <button
-              key={tab.id}
-              className={`kube-terms-tab ${tab.id === activeTabId ? "active" : ""}`}
-              onClick={() => {
-                terminalStore.setActiveTab(tab.id);
-                onTabSelected?.();
-              }}
-              title={tab.label}
-            >
-              <span className="kube-terms-tab-colors">
-                {colors.slice(0, 4).map((c, i) => (
-                  <span key={i} className="kube-terms-tab-dot" style={{ background: c }} />
-                ))}
-              </span>
-              <span className="kube-terms-tab-label">{tab.label}</span>
-              <span className="kube-terms-tab-count">{leaves.length}</span>
-              <span
-                className="kube-terms-tab-close"
-                role="button"
-                tabIndex={0}
-                title="Close terminal tab"
-                aria-label="Close terminal tab"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  terminalStore.closeTab(tab.id);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    terminalStore.closeTab(tab.id);
-                  }
-                }}
-              >
-                <ShellControlIcon size={12}>
-                  <path d="M4.5 4.5l7 7" />
-                  <path d="M11.5 4.5l-7 7" />
-                </ShellControlIcon>
-              </span>
-            </button>
-          );
-        })}
+        {tabs.map((tab) => (
+          <TabButton
+            key={tab.id}
+            tab={tab}
+            active={tab.id === activeTabId}
+            onSelect={() => {
+              terminalStore.setActiveTab(tab.id);
+              onTabSelected?.();
+            }}
+          />
+        ))}
         {!hideNewButton && (
           <button
             className="kube-terms-new"
@@ -431,6 +487,7 @@ export function KubeTerminalsPane({
             tabId={activeTab.id}
             path={[]}
             activeLeaf={activeTab.activeLeaf}
+            multi={collectLeaves(activeTab.layout).length > 1}
           />
         )}
       </div>}
