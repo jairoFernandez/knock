@@ -2021,11 +2021,10 @@ button.danger:hover:not(:disabled) {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
+/* Rendered in a portal on document.body (the dock clips overflow);
+   position comes inline from the anchor rect. */
 .bottom-terminal-shell-menu {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  right: 0;
-  z-index: 30;
+  z-index: 60;
   min-width: 160px;
   display: flex;
   flex-direction: column;
@@ -2035,7 +2034,9 @@ button.danger:hover:not(:disabled) {
   background: var(--panel, #1a1d23);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
-.bottom-terminal-actions .bottom-terminal-shell-item {
+.bottom-terminal-shell-item {
+  display: inline-flex;
+  align-items: center;
   width: 100%;
   height: auto;
   justify-content: flex-start;
@@ -2046,8 +2047,9 @@ button.danger:hover:not(:disabled) {
   box-shadow: none;
   font-size: 12px;
   color: var(--text);
+  cursor: pointer;
 }
-.bottom-terminal-actions .bottom-terminal-shell-item:hover {
+.bottom-terminal-shell-item:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 

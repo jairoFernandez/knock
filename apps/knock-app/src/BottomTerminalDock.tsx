@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
 import {
@@ -56,7 +57,12 @@ export function BottomTerminalDock({
 
   const [shells, setShells] = useState<ShellInfo[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Anchor position for the shell menu. The menu renders in a portal on
+  // document.body: the dock and the tab row both clip overflow, so an
+  // absolutely-positioned dropdown inside them is invisible.
+  const [menuPos, setMenuPos] = useState<{ right: number; bottom: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuElRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void listShells().then(setShells);
@@ -65,13 +71,28 @@ export function BottomTerminalDock({
   useEffect(() => {
     if (!menuOpen) return;
     function onDocClick(ev: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) {
-        setMenuOpen(false);
-      }
+      const t = ev.target as Node;
+      if (menuRef.current?.contains(t) || menuElRef.current?.contains(t)) return;
+      setMenuOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [menuOpen]);
+
+  function toggleMenu() {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const rect = menuRef.current?.getBoundingClientRect();
+    if (rect) {
+      setMenuPos({
+        right: Math.max(0, window.innerWidth - rect.right),
+        bottom: Math.max(0, window.innerHeight - rect.top + 4),
+      });
+    }
+    setMenuOpen(true);
+  }
 
   async function openNewShell(shell?: string) {
     if (spawnArgs) {
@@ -132,30 +153,43 @@ export function BottomTerminalDock({
                   aria-label="Choose shell"
                   aria-haspopup="menu"
                   aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen((o) => !o)}
+                  onClick={toggleMenu}
                 >
                   <DockIcon size={11}>
                     <path d="M4 6.5 8 10l4-3.5" />
                   </DockIcon>
                 </button>
               )}
-              {menuOpen && pickable.length > 0 && (
-                <div className="bottom-terminal-shell-menu" role="menu">
-                  {pickable.map((s) => (
-                    <button
-                      key={s.id}
-                      role="menuitem"
-                      className="bottom-terminal-shell-item"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        void openNewShell(s.id);
-                      }}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {menuOpen &&
+                pickable.length > 0 &&
+                menuPos &&
+                createPortal(
+                  <div
+                    ref={menuElRef}
+                    className="bottom-terminal-shell-menu"
+                    role="menu"
+                    style={{
+                      position: "fixed",
+                      right: menuPos.right,
+                      bottom: menuPos.bottom,
+                    }}
+                  >
+                    {pickable.map((s) => (
+                      <button
+                        key={s.id}
+                        role="menuitem"
+                        className="bottom-terminal-shell-item"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void openNewShell(s.id);
+                        }}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>,
+                  document.body,
+                )}
             </div>
             {terminalStore.tabs.length > 0 && (
               <>
