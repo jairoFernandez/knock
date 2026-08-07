@@ -480,6 +480,23 @@ class Store {
     const entry = this.terminals.get(termId);
     if (!entry) return;
     entry.title = title;
+    // Keep single-leaf tab labels in sync with their terminal's title.
+    for (const tab of this.tabs) {
+      if (tab.layout.kind === "leaf" && tab.layout.termId === termId) {
+        tab.label = title;
+      }
+    }
+    this.emit();
+  }
+
+  renameTab(tabId: string, label: string) {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    tab.label = label;
+    if (tab.layout.kind === "leaf") {
+      const entry = this.terminals.get(tab.layout.termId);
+      if (entry) entry.title = label;
+    }
     this.emit();
   }
 

@@ -157,6 +157,38 @@ export function BottomTerminalDock({
                 </div>
               )}
             </div>
+            {terminalStore.tabs.length > 0 && (
+              <>
+                <button
+                  className="bottom-terminal-icon"
+                  title="Split right"
+                  aria-label="Split right"
+                  onClick={() => {
+                    void terminalStore.splitActive("h");
+                    onExpandedChange(true);
+                  }}
+                >
+                  <DockIcon size={13}>
+                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+                    <path d="M8 3v10" />
+                  </DockIcon>
+                </button>
+                <button
+                  className="bottom-terminal-icon"
+                  title="Split down"
+                  aria-label="Split down"
+                  onClick={() => {
+                    void terminalStore.splitActive("v");
+                    onExpandedChange(true);
+                  }}
+                >
+                  <DockIcon size={13}>
+                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+                    <path d="M2.5 8h11" />
+                  </DockIcon>
+                </button>
+              </>
+            )}
             <button
               className="bottom-terminal-icon"
               title={expanded ? "Collapse terminal" : "Open terminal"}

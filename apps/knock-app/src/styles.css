@@ -1667,32 +1667,41 @@ button.danger:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px 6px;
+  height: 27px;
+  padding: 0 6px 0 9px;
   background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
+  border: none;
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
-  border-radius: 4px 4px 0 0;
+  border-radius: 5px 5px 0 0;
   white-space: nowrap;
 }
-.kube-terms-tab:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+.kube-terms-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
 .kube-terms-tab.active {
-  background: #242834;
-  border-color: var(--border-strong);
-  color: #fff;
-  box-shadow: inset 0 2px 0 var(--accent);
+  background: rgba(255,255,255,0.055);
+  color: var(--text);
 }
 .kube-terms-tab.active::after {
   content: "";
   position: absolute;
-  left: 8px;
-  right: 8px;
+  left: 6px;
+  right: 6px;
   bottom: 0;
   height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--accent);
+}
+.kube-terms-tab-input {
+  font-size: 12px;
+  font-family: inherit;
+  padding: 1px 4px;
+  width: 110px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent, #4a90e2);
+  border-radius: 3px;
+  outline: none;
 }
 .kube-terms-tab-colors { display: inline-flex; gap: 2px; }
 .kube-terms-tab-dot {
@@ -1714,18 +1723,23 @@ button.danger:hover:not(:disabled) {
   background: rgba(139, 108, 255, 0.28);
 }
 .kube-terms-tab-close {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 4px;
   background: transparent;
   border: none;
   padding: 0;
   color: var(--text-dim);
-  opacity: 0.7;
+  opacity: 0;
   transition: background 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+.kube-terms-tab:hover .kube-terms-tab-close,
+.kube-terms-tab.active .kube-terms-tab-close,
+.kube-terms-tab-close:focus-visible {
+  opacity: 0.7;
 }
 .kube-terms-tab-close:hover {
   color: var(--text);
@@ -1763,19 +1777,27 @@ button.danger:hover:not(:disabled) {
   border: 1px solid transparent;
   --leaf-color: #4a90e2;
 }
-.kube-leaf.active {
+/* Focus ring only matters when there are splits to disambiguate. */
+.kube-leaf.multi.active {
   border-color: var(--leaf-color);
-  box-shadow: inset 0 0 0 1px var(--leaf-color);
 }
 .kube-leaf-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
-  background: rgba(255,255,255,0.025);
-  border-bottom: 1px solid var(--border);
+  padding: 2px 8px;
+  background: transparent;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
   position: relative;
-  min-height: 24px;
+  min-height: 22px;
+}
+.kube-leaf-header .kube-leaf-actions {
+  opacity: 0.35;
+  transition: opacity 120ms ease;
+}
+.kube-leaf-header:hover .kube-leaf-actions,
+.kube-leaf-header .kube-leaf-actions:focus-within {
+  opacity: 1;
 }
 .kube-leaf-dot {
   width: 10px;
