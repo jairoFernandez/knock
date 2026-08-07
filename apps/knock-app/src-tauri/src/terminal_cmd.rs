@@ -528,6 +528,38 @@ fn windows_git_bash() -> Option<PathBuf> {
     None
 }
 
+/// Installed WSL distro names. `wsl.exe` historically prints UTF-16LE;
+/// WSL_UTF8=1 asks for UTF-8 (supported since WSL 0.64) and the decoder falls
+/// back to UTF-16LE when NUL bytes show the env var was ignored.
+#[cfg(windows)]
+fn wsl_distros() -> Vec<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = match Command::new("wsl.exe")
+        .args(["-l", "-q"])
+        .env("WSL_UTF8", "1")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = if out.stdout.contains(&0u8) {
+        let u16s: Vec<u16> = out
+            .stdout
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    text.lines()
+        .map(|l| l.trim().trim_matches('\u{0}').trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 #[cfg(windows)]
 const WINDOWS_SHELLS: &[(&str, &str)] = &[
     ("cmd", "Command Prompt"),
@@ -543,6 +575,9 @@ const UNIX_SHELLS: &[(&str, &str)] = &[("zsh", "zsh"), ("bash", "bash"), ("fish"
 fn shell_available(id: &str) -> bool {
     #[cfg(windows)]
     {
+        if id.starts_with("wsl:") {
+            return which_win("wsl.exe").is_some();
+        }
         match id {
             "cmd" => true,
             "powershell" => which_win("powershell.exe").is_some(),
@@ -575,6 +610,32 @@ pub fn terminal_list_shells() -> Vec<ShellInfo> {
     #[cfg(windows)]
     {
         for (id, label) in WINDOWS_SHELLS {
+            if *id == "wsl" {
+                // Expand the generic WSL entry into one entry per installed
+                // distro; fall back to the generic default-distro entry when
+                // enumeration yields nothing.
+                let distros = if shell_available("wsl") {
+                    wsl_distros()
+                } else {
+                    Vec::new()
+                };
+                if distros.is_empty() {
+                    out.push(ShellInfo {
+                        id: (*id).to_string(),
+                        label: (*label).to_string(),
+                        available: shell_available(id),
+                    });
+                } else {
+                    for d in distros {
+                        out.push(ShellInfo {
+                            id: format!("wsl:{d}"),
+                            label: format!("WSL · {d}"),
+                            available: true,
+                        });
+                    }
+                }
+                continue;
+            }
             out.push(ShellInfo {
                 id: (*id).to_string(),
                 label: (*label).to_string(),
@@ -615,6 +676,10 @@ fn shell_command(id: &str) -> (String, Vec<String>) {
                 (default_shell(), vec![])
             }
             "wsl" if shell_available("wsl") => ("wsl.exe".to_string(), vec![]),
+            d if d.starts_with("wsl:") && shell_available("wsl") => (
+                "wsl.exe".to_string(),
+                vec!["-d".to_string(), d["wsl:".len()..].to_string()],
+            ),
             "cmd" => (
                 std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
                 vec![],

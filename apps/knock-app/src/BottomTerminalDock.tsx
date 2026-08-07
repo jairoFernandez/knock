@@ -60,7 +60,9 @@ export function BottomTerminalDock({
   // Anchor position for the shell menu. The menu renders in a portal on
   // document.body: the dock and the tab row both clip overflow, so an
   // absolutely-positioned dropdown inside them is invisible.
-  const [menuPos, setMenuPos] = useState<{ right: number; bottom: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<
+    { right: number; top?: number; bottom?: number } | null
+  >(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuElRef = useRef<HTMLDivElement>(null);
 
@@ -86,10 +88,14 @@ export function BottomTerminalDock({
     }
     const rect = menuRef.current?.getBoundingClientRect();
     if (rect) {
-      setMenuPos({
-        right: Math.max(0, window.innerWidth - rect.right),
-        bottom: Math.max(0, window.innerHeight - rect.top + 4),
-      });
+      const right = Math.max(0, window.innerWidth - rect.right);
+      // Open upward by default; flip downward when the anchor sits near the
+      // top of the window (maximized dock) and the menu would be cut off.
+      if (rect.top < 280) {
+        setMenuPos({ right, top: rect.bottom + 4 });
+      } else {
+        setMenuPos({ right, bottom: Math.max(0, window.innerHeight - rect.top + 4) });
+      }
     }
     setMenuOpen(true);
   }
@@ -171,6 +177,7 @@ export function BottomTerminalDock({
                     style={{
                       position: "fixed",
                       right: menuPos.right,
+                      top: menuPos.top,
                       bottom: menuPos.bottom,
                     }}
                   >

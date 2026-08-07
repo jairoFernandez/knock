@@ -2025,6 +2025,8 @@ button.danger:hover:not(:disabled) {
    position comes inline from the anchor rect. */
 .bottom-terminal-shell-menu {
   z-index: 60;
+  max-height: 45vh;
+  overflow-y: auto;
   min-width: 160px;
   display: flex;
   flex-direction: column;
