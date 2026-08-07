@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Tree } from "./Tree";
 import { Editor } from "./Editor";
@@ -203,13 +204,12 @@ export function App() {
   const { pending: confirmPending, confirm, resolve: resolveConfirm } = useConfirm();
 
   useEffect(() => {
-    const el = document.documentElement as HTMLElement & { style: CSSStyleDeclaration & { zoom?: string } };
-    el.style.zoom = String(uiScale);
-    el.style.setProperty("--ui-zoom", String(uiScale));
-    return () => {
-      el.style.zoom = "";
-      el.style.removeProperty("--ui-zoom");
-    };
+    // Native webview page zoom (like Ctrl +/- in a browser). CSS `zoom` on the
+    // root element broke mouse-coordinate math in embedded canvas/terminal
+    // views (xterm selection landed on the wrong row) and needed 100vh hacks.
+    void getCurrentWebview()
+      .setZoom(uiScale)
+      .catch(() => undefined);
   }, [uiScale]);
 
   useEffect(() => {
@@ -527,7 +527,7 @@ export function App() {
   );
   const terminalDockVisible = terminalStore.tabs.length > 0;
   const terminalDockRowHeight = terminalDockMaximized
-    ? "minmax(0, calc((100vh / var(--ui-zoom, 1)) - 58px))"
+    ? "minmax(0, calc(100vh - 58px))"
     : `${terminalDockExpanded ? terminalDockHeight : 34}px`;
   const terminalDockRows = terminalDockVisible
     ? `34px minmax(0, 1fr) ${terminalDockRowHeight} 24px`
