@@ -516,6 +516,29 @@ class Store {
       /* no-op */
     }
   }
+
+  /** Cycle pane focus within the active tab. delta: +1 next, -1 previous. */
+  focusRelativeLeaf(delta: number) {
+    const tab = this.getActiveTab();
+    if (!tab) return;
+    const leaves = collectLeaves(tab.layout);
+    if (leaves.length < 2) return;
+    const idx = leaves.findIndex((l) => l.termId === tab.activeLeaf);
+    const next = leaves[(idx + delta + leaves.length) % leaves.length];
+    tab.activeLeaf = next.termId;
+    this.emit();
+    this.focusLeaf(next.termId);
+  }
+
+  /** Cycle between terminal tabs. delta: +1 next, -1 previous. */
+  focusRelativeTab(delta: number) {
+    if (this.tabs.length < 2) return;
+    const idx = this.tabs.findIndex((t) => t.id === this.activeTabId);
+    const next = this.tabs[(idx + delta + this.tabs.length) % this.tabs.length];
+    this.activeTabId = next.id;
+    this.emit();
+    this.focusLeaf(next.activeLeaf);
+  }
 }
 
 export const terminalStore = new Store();

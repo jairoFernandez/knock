@@ -231,6 +231,65 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [uiScale]);
 
+  // Terminal shortcuts. Capture phase so they win over xterm's own key
+  // handling; arrow combos are ignored while a regular text field has focus
+  // (xterm's hidden helper textarea doesn't count).
+  useEffect(() => {
+    function inTextField(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false;
+      if (t.classList.contains("xterm-helper-textarea")) return false;
+      return (
+        t instanceof HTMLInputElement ||
+        t instanceof HTMLTextAreaElement ||
+        t.isContentEditable
+      );
+    }
+    function onKey(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+
+      if (e.shiftKey && !e.altKey) {
+        if (key === "t") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (terminalSpawnArgs) {
+            void terminalStore.openNewTab(terminalSpawnArgs);
+          } else {
+            void terminalStore.openGeneralTab({ cwd: workspace?.root ?? null });
+          }
+          setTerminalDockExpanded(true);
+          return;
+        }
+        if (key === "d" || key === "e") {
+          e.preventDefault();
+          e.stopPropagation();
+          void terminalStore.splitActive(key === "d" ? "h" : "v");
+          setTerminalDockExpanded(true);
+          return;
+        }
+        if ((key === "arrowleft" || key === "arrowright") && !inTextField(e.target)) {
+          e.preventDefault();
+          e.stopPropagation();
+          terminalStore.focusRelativeTab(key === "arrowright" ? 1 : -1);
+          setTerminalDockExpanded(true);
+          return;
+        }
+      }
+
+      if (e.altKey && !e.shiftKey && key.startsWith("arrow") && !inTextField(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+        terminalStore.focusRelativeLeaf(
+          key === "arrowright" || key === "arrowdown" ? 1 : -1,
+        );
+        setTerminalDockExpanded(true);
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [terminalSpawnArgs, workspace]);
+
   function clampWidth(v: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, v));
   }

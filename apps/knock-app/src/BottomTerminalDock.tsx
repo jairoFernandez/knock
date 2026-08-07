@@ -110,11 +110,11 @@ export function BottomTerminalDock({
             <div className="bottom-terminal-new-group" ref={menuRef}>
               <button
                 className="bottom-terminal-new"
-                title={
+                title={`${
                   spawnArgs
                     ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
                     : "New plain shell"
-                }
+                } (Ctrl/Cmd+Shift+T)`}
                 onClick={() => {
                   void openNewShell();
                 }}
@@ -161,7 +161,7 @@ export function BottomTerminalDock({
               <>
                 <button
                   className="bottom-terminal-icon"
-                  title="Split right"
+                  title="Split right (Ctrl/Cmd+Shift+D)"
                   aria-label="Split right"
                   onClick={() => {
                     void terminalStore.splitActive("h");
@@ -175,7 +175,7 @@ export function BottomTerminalDock({
                 </button>
                 <button
                   className="bottom-terminal-icon"
-                  title="Split down"
+                  title="Split down (Ctrl/Cmd+Shift+E)"
                   aria-label="Split down"
                   onClick={() => {
                     void terminalStore.splitActive("v");
