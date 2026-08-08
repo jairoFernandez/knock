@@ -228,6 +228,20 @@ export function BottomTerminalDock({
                     <path d="M2.5 8h11" />
                   </DockIcon>
                 </button>
+                <button
+                  className="bottom-terminal-icon"
+                  title="Reset input modes — fixes pasting after a process left bracketed paste on (Ctrl/Cmd+Shift+R)"
+                  aria-label="Reset input modes"
+                  onClick={() => {
+                    terminalStore.resetInputModes();
+                    onExpandedChange(true);
+                  }}
+                >
+                  <DockIcon size={13}>
+                    <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+                    <path d="M13 2.5V5h-2.5" />
+                  </DockIcon>
+                </button>
               </>
             )}
             <button

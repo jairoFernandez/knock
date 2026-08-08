@@ -524,6 +524,26 @@ class Store {
     }
   }
 
+  /**
+   * Clear input modes left latched by a process that exited without restoring
+   * them — most visibly bracketed paste (ESC[?2004h), which makes every later
+   * paste come through wrapped in ESC[200~/ESC[201~ that the shell prints
+   * literally. spawn() already does this for new sessions; this covers a
+   * session that got stuck while open, so the user need not open a new tab.
+   *
+   * Writes into the emulator rather than the PTY: these modes live in xterm's
+   * parser, not in the shell.
+   */
+  resetInputModes(termId?: string) {
+    const id = termId ?? this.getActiveTab()?.activeLeaf;
+    if (!id) return;
+    const entry = this.terminals.get(id);
+    if (!entry) return;
+    // Bracketed paste, application cursor keys, application keypad.
+    entry.term.write("\x1b[?2004l\x1b[?1l\x1b>");
+    this.focusLeaf(id);
+  }
+
   /** Cycle pane focus within the active tab. delta: +1 next, -1 previous. */
   focusRelativeLeaf(delta: number) {
     const tab = this.getActiveTab();

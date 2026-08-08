@@ -275,6 +275,13 @@ export function App() {
           setTerminalDockExpanded(true);
           return;
         }
+        if (key === "r") {
+          e.preventDefault();
+          e.stopPropagation();
+          terminalStore.resetInputModes();
+          setTerminalDockExpanded(true);
+          return;
+        }
       }
 
       if (e.altKey && !e.shiftKey && key.startsWith("arrow") && !inTextField(e.target)) {
