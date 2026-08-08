@@ -409,6 +409,13 @@ class Store {
       });
       entry.sessionId = sessionId;
 
+      // Clear any bracketed-paste mode left latched by a previous process in
+      // this terminal. The flag lives in xterm's parser, not in the shell, so a
+      // process that sent ESC[?2004h and died without the matching ESC[?2004l
+      // keeps it on: later pastes get wrapped in ESC[200~/ESC[201~ and the new
+      // shell prints them literally. Written into the emulator, not the PTY.
+      entry.term.write("\x1b[?2004l");
+
       const dataEvt = `terminal:data:${sessionId}`;
       const exitEvt = `terminal:exit:${sessionId}`;
       const u1 = await listen<string>(dataEvt, (e) => {

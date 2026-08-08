@@ -1,0 +1,67 @@
+name: Test build (Windows)
+
+# Manual, Windows-only build for testing a change on a real machine without
+# cutting a release. Produces installers as a workflow artifact — nothing is
+# published to Releases and no tag is created.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-app:
+    name: Build Tauri (windows-x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            apps/knock-app/src-tauri
+          key: tauri-x86_64-pc-windows-msvc
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: apps/knock-app/pnpm-lock.yaml
+
+      - name: Install JS deps
+        working-directory: apps/knock-app
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KNOCK_VERSION: test-${{ github.sha }}
+          KNOCK_COMMIT: ${{ github.sha }}
+          KNOCK_REPO: ${{ github.repository }}
+          KNOCK_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        with:
+          projectPath: apps/knock-app
+          args: --target x86_64-pc-windows-msvc
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: knock-windows-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            apps/knock-app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            apps/knock-app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
