@@ -1,6 +1,8 @@
 node_modules/
 dist/
 build/
+# tsc outDir for the node --test suite; `npm test` deletes and rebuilds it.
+.test-dist/
 .DS_Store
 .env
 *.log
