@@ -92,7 +92,14 @@ function LeafView({
     <div
       className={`kube-leaf ${isActive ? "active" : ""} ${multi ? "multi" : ""}`}
       style={{ "--leaf-color": entry.color } as React.CSSProperties}
-      onMouseDown={() => terminalStore.setLeafActive(tabId, termId)}
+      // Focus on every mousedown, not only when the active leaf changes:
+      // clicking an already-active pane after focus drifted elsewhere (a tab
+      // button, the splitter) must send keys — including Ctrl-C — back to the
+      // PTY rather than to the window.
+      onMouseDown={() => {
+        terminalStore.setLeafActive(tabId, termId);
+        terminalStore.focusLeaf(termId);
+      }}
     >
       {multi && <LeafHeader entry={entry} tabId={tabId} />}
       <div ref={hostRef} className="kube-leaf-host" />

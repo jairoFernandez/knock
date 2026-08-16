@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   collectEditableSegments,
   getSegmentOffset,
+  shouldMoveCursorForClick,
+  CLICK_OUTPUT_QUIET_MS,
 } from "../.test-dist/src/terminalClickRange.js";
 
 function makeBuffer({ cols = 20, cursorRow, cursorCol, lines }) {
@@ -98,5 +100,74 @@ test("treats continuation prompts as part of the same editable block", () => {
       { row: 2, promptCols: 2, editableCols: 5 },
       { row: 3, promptCols: 2, editableCols: 4 },
     ],
+  );
+});
+
+// -------- click-to-position-cursor guard --------
+
+function makeClickState(overrides = {}) {
+  return {
+    viewportY: 100,
+    baseY: 100,
+    lastWriteAt: 0,
+    now: 10_000,
+    selectionLength: 0,
+    dragDistance: 0,
+    ...overrides,
+  };
+}
+
+test("moves the cursor for a quiet click on the live prompt", () => {
+  assert.equal(shouldMoveCursorForClick(makeClickState()), true);
+});
+
+test("ignores a drag: the user is selecting text", () => {
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ dragDistance: 4 })),
+    false,
+  );
+  // 3px of jitter still counts as a click, not a drag.
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ dragDistance: 3 })),
+    true,
+  );
+});
+
+test("ignores a click while a selection is active", () => {
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ selectionLength: 12 })),
+    false,
+  );
+});
+
+test("ignores a click while scrolled back through history", () => {
+  // Clicked row belongs to scrollback, not to the shell's input line.
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ viewportY: 40, baseY: 100 })),
+    false,
+  );
+});
+
+test("ignores a click while output is still streaming", () => {
+  // The row under the pointer has already scrolled away by now.
+  assert.equal(
+    shouldMoveCursorForClick(
+      makeClickState({ now: 10_000, lastWriteAt: 9_950 }),
+    ),
+    false,
+  );
+});
+
+test("resumes moving the cursor once output goes quiet", () => {
+  const quietAt = 10_000 - CLICK_OUTPUT_QUIET_MS;
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ now: 10_000, lastWriteAt: quietAt })),
+    true,
+  );
+  assert.equal(
+    shouldMoveCursorForClick(
+      makeClickState({ now: 10_000, lastWriteAt: quietAt + 1 }),
+    ),
+    false,
   );
 });

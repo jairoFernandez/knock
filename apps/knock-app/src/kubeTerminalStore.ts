@@ -14,6 +14,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   collectEditableSegments,
   getSegmentOffset,
+  shouldMoveCursorForClick,
   type TerminalClickBuffer,
 } from "./terminalClickRange";
 
@@ -63,6 +64,11 @@ export interface TerminalEntry {
   title: string;
   /** Color tag (CSS color). */
   color: string;
+  /**
+   * Timestamp (ms) of the last PTY chunk written into the emulator. Used to
+   * suppress click-to-position-cursor while output is streaming.
+   */
+  lastWriteAt: number;
 }
 
 /** Distinct, dark-mode-friendly colors used to tag terminal sessions. */
@@ -295,8 +301,15 @@ class Store {
       fontSize: 12,
       theme: { background: "#0f1115", foreground: "#d4d4d8" },
       cursorBlink: true,
-      convertEol: true,
-      scrollback: 5000,
+      // A PTY already terminates lines with CRLF. Converting again turns a bare
+      // \n — which processes use to redraw a line in place (spinners, progress
+      // bars) — into a line feed, so output double-spaces and the scrollback
+      // fills with torn fragments.
+      convertEol: false,
+      scrollback: 20000,
+      // Keep typing anchored to the prompt without yanking the view back to the
+      // bottom on every chunk of process output.
+      scrollOnUserInput: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -321,6 +334,7 @@ class Store {
       spawning: false,
       title: args.title ?? args.name ?? "Shell",
       color: args.color ?? nextColor(usedColors),
+      lastWriteAt: 0,
     };
 
     // Buffer user input until the backend session id arrives.
@@ -351,13 +365,21 @@ class Store {
       const start = clickStart;
       clickStart = null;
       if (!start) return;
-      // Ignore drags (user is selecting text)
       const dx = Math.abs(ev.clientX - start.x);
       const dy = Math.abs(ev.clientY - start.y);
-      if (dx > 3 || dy > 3) return;
-      // Ignore if user has an active selection
-      const sel = term.getSelection();
-      if (sel && sel.length > 0) return;
+      const buf = term.buffer.active;
+      if (
+        !shouldMoveCursorForClick({
+          viewportY: buf.viewportY,
+          baseY: buf.baseY,
+          lastWriteAt: entry.lastWriteAt,
+          now: Date.now(),
+          selectionLength: term.getSelection()?.length ?? 0,
+          dragDistance: Math.max(dx, dy),
+        })
+      ) {
+        return;
+      }
 
       const screen = container.querySelector(".xterm-screen") as HTMLElement | null;
       const target = screen ?? container;
@@ -419,6 +441,7 @@ class Store {
       const dataEvt = `terminal:data:${sessionId}`;
       const exitEvt = `terminal:exit:${sessionId}`;
       const u1 = await listen<string>(dataEvt, (e) => {
+        entry.lastWriteAt = Date.now();
         entry.term.write(decodeBase64(e.payload));
       });
       const u2 = await listen<void>(exitEvt, () => {

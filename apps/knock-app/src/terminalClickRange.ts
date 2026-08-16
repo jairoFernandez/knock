@@ -126,3 +126,47 @@ export function getSegmentOffset(
   }
   return null;
 }
+
+/**
+ * Time after the last PTY write during which click-to-position-cursor is
+ * suppressed. While a process is streaming output the row a click landed on is
+ * already stale by the time the handler runs, so the arrow keys we would send
+ * move the cursor somewhere the user never pointed at — and in a shell that is
+ * echoing, they corrupt the current input line.
+ */
+export const CLICK_OUTPUT_QUIET_MS = 150;
+
+export interface ClickCursorMoveState {
+  /** Buffer row currently at the top of the viewport. */
+  viewportY: number;
+  /** Buffer row at the top of the viewport when scrolled fully to the bottom. */
+  baseY: number;
+  /** Timestamp of the last write into the emulator, in ms. */
+  lastWriteAt: number;
+  /** Current time, in ms. */
+  now: number;
+  /** Length of the emulator's current selection. */
+  selectionLength: number;
+  /** Pixel distance the pointer travelled between mousedown and mouseup. */
+  dragDistance: number;
+}
+
+/**
+ * Whether a click should be translated into cursor-movement keys.
+ *
+ * Every rejection here is a case where sending arrow keys does damage rather
+ * than nothing: scrolled-back views address rows the shell no longer owns,
+ * live output races the coordinates, a drag is a selection gesture, and an
+ * existing selection means the user is copying, not repositioning.
+ */
+export function shouldMoveCursorForClick(state: ClickCursorMoveState): boolean {
+  // A drag is a text selection, not a click.
+  if (state.dragDistance > 3) return false;
+  // The user is selecting text to copy; never disturb the input line.
+  if (state.selectionLength > 0) return false;
+  // Scrolled back through history: the clicked row is not the input line.
+  if (state.viewportY !== state.baseY) return false;
+  // Output is still streaming; the clicked coordinates are already stale.
+  if (state.now - state.lastWriteAt < CLICK_OUTPUT_QUIET_MS) return false;
+  return true;
+}
