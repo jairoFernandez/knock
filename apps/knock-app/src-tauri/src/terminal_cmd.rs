@@ -855,8 +855,7 @@ pub async fn terminal_spawn(
                         // Reader is blocking by default; if the OS ever returns
                         // this, flush what we have and sleep to avoid a busy spin.
                         if !pending.is_empty() {
-                            let chunk =
-                                base64::engine::general_purpose::STANDARD.encode(&pending);
+                            let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
                             let _ = app_for_reader.emit(&event_name, chunk);
                             pending.clear();
                             last_flush = std::time::Instant::now();
