@@ -170,3 +170,27 @@ export function shouldMoveCursorForClick(state: ClickCursorMoveState): boolean {
   if (state.now - state.lastWriteAt < CLICK_OUTPUT_QUIET_MS) return false;
   return true;
 }
+
+export interface PtyResizeState {
+  /** Geometry xterm reports after fit(). */
+  cols: number;
+  rows: number;
+  /** Geometry the PTY was last told about. */
+  ptyCols: number;
+  ptyRows: number;
+}
+
+/**
+ * Whether a fit() result is worth forwarding to the PTY.
+ *
+ * Every resize that reaches the PTY raises SIGWINCH, and a full-screen program
+ * redraws on each one. A ResizeObserver fires repeatedly while a split or the
+ * dock settles, so forwarding unconditionally makes a program repaint at
+ * several widths in a row and leaves torn, overlapping rows on screen.
+ * Un-laid-out containers measure as 0 and would wedge the child at a bogus size.
+ */
+export function shouldResizePty(state: PtyResizeState): boolean {
+  if (!state.cols || !state.rows) return false;
+  if (!Number.isFinite(state.cols) || !Number.isFinite(state.rows)) return false;
+  return state.cols !== state.ptyCols || state.rows !== state.ptyRows;
+}

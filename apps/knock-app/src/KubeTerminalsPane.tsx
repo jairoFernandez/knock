@@ -80,9 +80,12 @@ function LeafView({
     };
   }, [termId, entry]);
 
+  // Also runs on mount, which is what makes the very first terminal usable
+  // without opening a second tab first: that leaf is already active on the
+  // initial render, so an isActive transition never happens for it.
   useEffect(() => {
     if (isActive) terminalStore.focusLeaf(termId);
-  }, [isActive, termId]);
+  }, [isActive, termId, entry]);
 
   if (!entry) {
     return <div className="kube-leaf kube-leaf-missing">(missing terminal)</div>;

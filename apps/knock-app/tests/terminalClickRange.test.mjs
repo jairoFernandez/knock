@@ -5,6 +5,7 @@ import {
   collectEditableSegments,
   getSegmentOffset,
   shouldMoveCursorForClick,
+  shouldResizePty,
   CLICK_OUTPUT_QUIET_MS,
 } from "../.test-dist/src/terminalClickRange.js";
 
@@ -170,4 +171,48 @@ test("resumes moving the cursor once output goes quiet", () => {
     ),
     false,
   );
+});
+
+// -------- PTY resize gate --------
+
+function makeResizeState(overrides = {}) {
+  return { cols: 120, rows: 30, ptyCols: 100, ptyRows: 24, ...overrides };
+}
+
+test("forwards a genuine geometry change to the PTY", () => {
+  assert.equal(shouldResizePty(makeResizeState()), true);
+});
+
+test("suppresses a resize that matches what the PTY already has", () => {
+  // The repeated no-op case: fit() runs on every ResizeObserver notification
+  // but usually measures the same grid. Forwarding it raises a pointless
+  // SIGWINCH and makes full-screen programs repaint.
+  assert.equal(
+    shouldResizePty(makeResizeState({ cols: 100, rows: 24 })),
+    false,
+  );
+});
+
+test("forwards when only one dimension changed", () => {
+  assert.equal(
+    shouldResizePty(makeResizeState({ cols: 100, rows: 40 })),
+    true,
+  );
+  assert.equal(
+    shouldResizePty(makeResizeState({ cols: 140, rows: 24 })),
+    true,
+  );
+});
+
+test("suppresses a resize before the container is laid out", () => {
+  // A hidden or not-yet-measured container reports 0; resizing the PTY to that
+  // wedges the child process at a bogus size.
+  assert.equal(shouldResizePty(makeResizeState({ cols: 0, rows: 0 })), false);
+  assert.equal(shouldResizePty(makeResizeState({ cols: 0 })), false);
+  assert.equal(shouldResizePty(makeResizeState({ rows: 0 })), false);
+});
+
+test("suppresses a non-finite measurement", () => {
+  assert.equal(shouldResizePty(makeResizeState({ cols: NaN })), false);
+  assert.equal(shouldResizePty(makeResizeState({ rows: Infinity })), false);
 });

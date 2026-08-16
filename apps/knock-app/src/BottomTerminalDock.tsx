@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
 import {
@@ -66,9 +67,26 @@ export function BottomTerminalDock({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuElRef = useRef<HTMLDivElement>(null);
 
+  // The default shell is persisted app-wide (same setting as Kubeconfigs →
+  // Settings); mirror it here so the dock can show and change it without
+  // sending the user hunting for that panel.
+  const [defaultShell, setDefaultShell] = useState<string>("auto");
+
   useEffect(() => {
     void listShells().then(setShells);
+    void invoke<{ preferredShell: string }>("kubeconfig_settings_get")
+      .then((s) => setDefaultShell(s.preferredShell || "auto"))
+      .catch(() => undefined);
   }, []);
+
+  async function makeDefaultShell(id: string) {
+    setDefaultShell(id);
+    try {
+      await invoke("kubeconfig_settings_set", { preferredShell: id });
+    } catch {
+      /* keep the optimistic value; the next open re-reads the real one */
+    }
+  }
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -182,17 +200,45 @@ export function BottomTerminalDock({
                     }}
                   >
                     {pickable.map((s) => (
-                      <button
-                        key={s.id}
-                        role="menuitem"
-                        className="bottom-terminal-shell-item"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void openNewShell(s.id);
-                        }}
-                      >
-                        {s.label}
-                      </button>
+                      <div key={s.id} className="bottom-terminal-shell-row">
+                        <button
+                          role="menuitem"
+                          className="bottom-terminal-shell-item"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void openNewShell(s.id);
+                          }}
+                        >
+                          {s.label}
+                          {s.id === defaultShell && (
+                            <span className="bottom-terminal-shell-default">
+                              default
+                            </span>
+                          )}
+                        </button>
+                        {/* Pin as default without leaving the dock — the same
+                            setting lives in Kubeconfigs → Settings, which is
+                            not where anyone looks for it. */}
+                        <button
+                          className="bottom-terminal-shell-pin"
+                          title={
+                            s.id === defaultShell
+                              ? `${s.label} is the default shell`
+                              : `Make ${s.label} the default shell`
+                          }
+                          aria-label={`Make ${s.label} the default shell`}
+                          aria-pressed={s.id === defaultShell}
+                          disabled={s.id === defaultShell}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void makeDefaultShell(s.id);
+                          }}
+                        >
+                          <DockIcon size={11}>
+                            <path d="M8 2.5 9.6 6l3.9.4-2.9 2.6.8 3.8L8 11l-3.4 1.8.8-3.8L2.5 6.4 6.4 6z" />
+                          </DockIcon>
+                        </button>
+                      </div>
                     ))}
                   </div>,
                   document.body,

@@ -15,6 +15,7 @@ import {
   collectEditableSegments,
   getSegmentOffset,
   shouldMoveCursorForClick,
+  shouldResizePty,
   type TerminalClickBuffer,
 } from "./terminalClickRange";
 
@@ -69,6 +70,11 @@ export interface TerminalEntry {
    * suppress click-to-position-cursor while output is streaming.
    */
   lastWriteAt: number;
+  /** Pending rAF handle coalescing a burst of resize notifications. */
+  resizeFrame: number | null;
+  /** Geometry last sent to the PTY, so identical resizes aren't re-sent. */
+  ptyCols: number;
+  ptyRows: number;
 }
 
 /** Distinct, dark-mode-friendly colors used to tag terminal sessions. */
@@ -335,6 +341,9 @@ class Store {
       title: args.title ?? args.name ?? "Shell",
       color: args.color ?? nextColor(usedColors),
       lastWriteAt: 0,
+      resizeFrame: null,
+      ptyCols: 0,
+      ptyRows: 0,
     };
 
     // Buffer user input until the backend session id arrives.
@@ -420,16 +429,22 @@ class Store {
         pending?: string[];
         initialPassphrase?: string | null;
       };
+      const cols = entry.term.cols || 80;
+      const rows = entry.term.rows || 24;
       const sessionId = await invoke<string>("terminal_spawn", {
         name: entry.name,
         project: entry.project,
         passphrase: e.initialPassphrase ?? null,
         cwd: entry.cwd,
-        cols: entry.term.cols || 80,
-        rows: entry.term.rows || 24,
+        cols,
+        rows,
         shell: entry.shell ?? "auto",
       });
       entry.sessionId = sessionId;
+      // Record what the PTY was created with so the first resize only fires if
+      // the layout actually differs from the spawn geometry.
+      entry.ptyCols = cols;
+      entry.ptyRows = rows;
 
       // Clear any bracketed-paste mode left latched by a previous process in
       // this terminal. The flag lives in xterm's parser, not in the shell, so a
@@ -471,6 +486,10 @@ class Store {
   private async disposeTerminal(termId: string): Promise<void> {
     const entry = this.terminals.get(termId);
     if (!entry) return;
+    if (entry.resizeFrame !== null) {
+      cancelAnimationFrame(entry.resizeFrame);
+      entry.resizeFrame = null;
+    }
     for (const u of entry.unlisten) {
       try {
         u();
@@ -492,18 +511,44 @@ class Store {
   resizeLeaf(termId: string) {
     const entry = this.terminals.get(termId);
     if (!entry) return;
+    // Coalesce resizes into one per frame. A ResizeObserver fires several times
+    // while a split or the dock settles, and every fit() that reaches the PTY
+    // raises SIGWINCH — a burst of them makes a full-screen program redraw at
+    // several widths in a row, which is what leaves torn, overlapping rows.
+    if (entry.resizeFrame !== null) {
+      cancelAnimationFrame(entry.resizeFrame);
+    }
+    entry.resizeFrame = requestAnimationFrame(() => {
+      entry.resizeFrame = null;
+      this.applyResize(entry);
+    });
+  }
+
+  private applyResize(entry: TerminalEntry) {
     try {
       entry.fit.fit();
     } catch {
       /* no-op */
     }
-    if (entry.sessionId) {
-      invoke("terminal_resize", {
-        sessionId: entry.sessionId,
-        cols: entry.term.cols,
-        rows: entry.term.rows,
-      }).catch(() => undefined);
+    const { cols, rows } = entry.term;
+    if (!entry.sessionId) return;
+    if (
+      !shouldResizePty({
+        cols,
+        rows,
+        ptyCols: entry.ptyCols,
+        ptyRows: entry.ptyRows,
+      })
+    ) {
+      return;
     }
+    entry.ptyCols = cols;
+    entry.ptyRows = rows;
+    invoke("terminal_resize", {
+      sessionId: entry.sessionId,
+      cols,
+      rows,
+    }).catch(() => undefined);
   }
 
   setTerminalTitle(termId: string, title: string) {
@@ -540,11 +585,26 @@ class Store {
   focusLeaf(termId: string) {
     const entry = this.terminals.get(termId);
     if (!entry) return;
-    try {
-      entry.term.focus();
-    } catch {
-      /* no-op */
-    }
+    // xterm's textarea only takes focus once the terminal has been laid out. On
+    // the very first terminal the focus call lands before the container has a
+    // size, so it silently does nothing and the pane looks inert until the user
+    // opens a second tab. Retry on the next frame when the DOM isn't ready yet.
+    const attempt = (retriesLeft: number) => {
+      const connected = entry.container.isConnected;
+      const sized = entry.container.clientHeight > 0;
+      if (connected && sized) {
+        try {
+          entry.term.focus();
+        } catch {
+          /* no-op */
+        }
+        return;
+      }
+      if (retriesLeft > 0) {
+        requestAnimationFrame(() => attempt(retriesLeft - 1));
+      }
+    };
+    attempt(10);
   }
 
   /**
