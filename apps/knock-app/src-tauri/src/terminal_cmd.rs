@@ -675,10 +675,22 @@ fn shell_command(id: &str) -> (String, Vec<String>) {
                 }
                 (default_shell(), vec![])
             }
-            "wsl" if shell_available("wsl") => ("wsl.exe".to_string(), vec![]),
+            // `--shell-type login` makes wsl.exe exec the distro's login shell
+            // directly instead of layering its own command wrapper, which keeps
+            // job control (Ctrl-C) and the alternate screen behaving like a
+            // native terminal.
+            "wsl" if shell_available("wsl") => (
+                "wsl.exe".to_string(),
+                vec!["--shell-type".to_string(), "login".to_string()],
+            ),
             d if d.starts_with("wsl:") && shell_available("wsl") => (
                 "wsl.exe".to_string(),
-                vec!["-d".to_string(), d["wsl:".len()..].to_string()],
+                vec![
+                    "-d".to_string(),
+                    d["wsl:".len()..].to_string(),
+                    "--shell-type".to_string(),
+                    "login".to_string(),
+                ],
             ),
             "cmd" => (
                 std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
@@ -707,6 +719,24 @@ fn shell_command(id: &str) -> (String, Vec<String>) {
     }
 }
 
+/// Max bytes buffered before the reader thread emits, regardless of elapsed
+/// time. Bounds memory and latency under a firehose of output.
+const FLUSH_BYTES: usize = 64 * 1024;
+
+/// Max time output may sit buffered. Short enough to feel instant for
+/// interactive typing, long enough to collapse a log flood into few events.
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// Whether the reader thread should emit its buffer now. Emits once the buffer
+/// is large or the oldest buffered byte has waited long enough; never emits an
+/// empty buffer (that would spam no-op events while the PTY is idle).
+fn should_flush(pending_len: usize, since_last_flush: std::time::Duration) -> bool {
+    if pending_len == 0 {
+        return false;
+    }
+    pending_len >= FLUSH_BYTES || since_last_flush >= FLUSH_INTERVAL
+}
+
 // Terminal commands are async so they run on Tauri's async runtime instead of
 // the main thread: ConPTY spawn/write/resize can block, and blocking the main
 // thread freezes the whole window on Windows.
@@ -722,7 +752,36 @@ pub async fn terminal_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    // The caller may supply the session id so it can subscribe to this
+    // session's events *before* the shell starts producing them. Generated
+    // here when absent, preserving the original contract.
+    session_id: Option<String>,
 ) -> Result<String, String> {
+    // Resolve the session id first: a rejected id must not leave a PTY or a
+    // decrypted kubeconfig behind.
+    //
+    // Accept a caller-supplied id only if it parses as a UUID. It is
+    // interpolated into event names and used as the session map key, so an
+    // arbitrary string would let a caller collide with or shadow another
+    // session's events.
+    let session_id = match session_id {
+        Some(s) => {
+            let parsed = uuid::Uuid::parse_str(&s)
+                .map_err(|_| "session id must be a UUID".to_string())?
+                .to_string();
+            if sessions
+                .map
+                .lock()
+                .map_err(|e| e.to_string())?
+                .contains_key(&parsed)
+            {
+                return Err("session id already in use".to_string());
+            }
+            parsed
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    };
+
     let kubeconfig_path = if let Some(name) = name.filter(|s| !s.is_empty()) {
         let project = project_or_default(project);
         let pass = pass_opt(passphrase);
@@ -776,7 +835,6 @@ pub async fn terminal_spawn(
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
     let event_name = format!("terminal:data:{}", session_id);
     let exit_event = format!("terminal:exit:{}", session_id);
 
@@ -797,12 +855,23 @@ pub async fn terminal_spawn(
     let sessions_for_reader = sessions.map.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        // Coalesce PTY output before crossing the Tauri IPC boundary. A chatty
+        // process (dev server logs, `bun run`) produces thousands of small reads
+        // per second; emitting one event each saturates the event channel, which
+        // stalls the webview and makes keystrokes (Ctrl-C included) land late.
+        let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
+        let mut last_flush = std::time::Instant::now();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF: PTY closed, process tree exited
                 Ok(n) => {
-                    let chunk = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
-                    let _ = app_for_reader.emit(&event_name, chunk);
+                    pending.extend_from_slice(&buf[..n]);
+                    if should_flush(pending.len(), last_flush.elapsed()) {
+                        let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
+                        let _ = app_for_reader.emit(&event_name, chunk);
+                        pending.clear();
+                        last_flush = std::time::Instant::now();
+                    }
                 }
                 // Transient errors must NOT kill the stream. On Windows ConPTY a
                 // chatty process (e.g. `next start` flooding logs) can surface
@@ -812,7 +881,13 @@ pub async fn terminal_spawn(
                     std::io::ErrorKind::Interrupted => continue,
                     std::io::ErrorKind::WouldBlock => {
                         // Reader is blocking by default; if the OS ever returns
-                        // this, sleep to avoid a busy spin.
+                        // this, flush what we have and sleep to avoid a busy spin.
+                        if !pending.is_empty() {
+                            let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
+                            let _ = app_for_reader.emit(&event_name, chunk);
+                            pending.clear();
+                            last_flush = std::time::Instant::now();
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(5));
                         continue;
                     }
@@ -825,6 +900,12 @@ pub async fn terminal_spawn(
                     }
                 },
             }
+        }
+        // Never drop the tail: whatever the process wrote just before exiting
+        // must reach the emulator before the exit event.
+        if !pending.is_empty() {
+            let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
+            let _ = app_for_reader.emit(&event_name, chunk);
         }
         let _ = app_for_reader.emit(&exit_event, ());
         if let Ok(mut m) = sessions_for_reader.lock() {
@@ -882,4 +963,78 @@ pub async fn terminal_kill(
         let _ = sess.child.kill();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn empty_buffer_never_flushes() {
+        // An idle PTY must not produce events, however long it has been idle.
+        assert!(!should_flush(0, Duration::from_millis(0)));
+        assert!(!should_flush(0, Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn small_recent_writes_are_coalesced() {
+        // The whole point: a burst of tiny reads stays buffered instead of
+        // emitting one IPC event per read.
+        assert!(!should_flush(1, Duration::from_millis(0)));
+        assert!(!should_flush(64, Duration::from_millis(7)));
+        assert!(!should_flush(FLUSH_BYTES - 1, Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn flushes_once_the_interval_elapses() {
+        // Interactive output must not wait for the buffer to fill.
+        assert!(should_flush(1, FLUSH_INTERVAL));
+        assert!(should_flush(1, FLUSH_INTERVAL + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn flushes_once_the_buffer_is_large() {
+        // A firehose must bound memory and latency without waiting for the timer.
+        assert!(should_flush(FLUSH_BYTES, Duration::from_millis(0)));
+        assert!(should_flush(FLUSH_BYTES * 4, Duration::from_millis(0)));
+    }
+
+    #[test]
+    fn caller_supplied_session_ids_must_be_uuids() {
+        // The id is interpolated into event names and used as the session map
+        // key, so anything that isn't a UUID is rejected rather than sanitized.
+        assert!(uuid::Uuid::parse_str("terminal:data:other").is_err());
+        assert!(uuid::Uuid::parse_str("../../etc/passwd").is_err());
+        assert!(uuid::Uuid::parse_str("").is_err());
+        assert!(uuid::Uuid::parse_str("6f1a1e64-not-a-uuid").is_err());
+
+        let ok = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        assert_eq!(uuid::Uuid::parse_str(ok).unwrap().to_string(), ok);
+    }
+
+    #[test]
+    fn flush_interval_stays_interactive() {
+        // Guard the constants themselves: a long interval would make typing feel
+        // laggy, a huge buffer would delay the first paint of a log line.
+        assert!(FLUSH_INTERVAL <= Duration::from_millis(16));
+        assert!(FLUSH_BYTES >= 8 * 1024 && FLUSH_BYTES <= 512 * 1024);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_shells_use_login_shell_type() {
+        // Without --shell-type login, wsl.exe wraps the distro shell in its own
+        // command layer and Ctrl-C / job control misbehave under ConPTY.
+        if !shell_available("wsl") {
+            return;
+        }
+        let (prog, args) = shell_command("wsl");
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec!["--shell-type", "login"]);
+
+        let (prog, args) = shell_command("wsl:Ubuntu");
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec!["-d", "Ubuntu", "--shell-type", "login"]);
+    }
 }

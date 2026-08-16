@@ -80,9 +80,12 @@ function LeafView({
     };
   }, [termId, entry]);
 
+  // Also runs on mount, which is what makes the very first terminal usable
+  // without opening a second tab first: that leaf is already active on the
+  // initial render, so an isActive transition never happens for it.
   useEffect(() => {
     if (isActive) terminalStore.focusLeaf(termId);
-  }, [isActive, termId]);
+  }, [isActive, termId, entry]);
 
   if (!entry) {
     return <div className="kube-leaf kube-leaf-missing">(missing terminal)</div>;
@@ -92,7 +95,14 @@ function LeafView({
     <div
       className={`kube-leaf ${isActive ? "active" : ""} ${multi ? "multi" : ""}`}
       style={{ "--leaf-color": entry.color } as React.CSSProperties}
-      onMouseDown={() => terminalStore.setLeafActive(tabId, termId)}
+      // Focus on every mousedown, not only when the active leaf changes:
+      // clicking an already-active pane after focus drifted elsewhere (a tab
+      // button, the splitter) must send keys — including Ctrl-C — back to the
+      // PTY rather than to the window.
+      onMouseDown={() => {
+        terminalStore.setLeafActive(tabId, termId);
+        terminalStore.focusLeaf(termId);
+      }}
     >
       {multi && <LeafHeader entry={entry} tabId={tabId} />}
       <div ref={hostRef} className="kube-leaf-host" />
