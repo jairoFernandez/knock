@@ -752,7 +752,36 @@ pub async fn terminal_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    // The caller may supply the session id so it can subscribe to this
+    // session's events *before* the shell starts producing them. Generated
+    // here when absent, preserving the original contract.
+    session_id: Option<String>,
 ) -> Result<String, String> {
+    // Resolve the session id first: a rejected id must not leave a PTY or a
+    // decrypted kubeconfig behind.
+    //
+    // Accept a caller-supplied id only if it parses as a UUID. It is
+    // interpolated into event names and used as the session map key, so an
+    // arbitrary string would let a caller collide with or shadow another
+    // session's events.
+    let session_id = match session_id {
+        Some(s) => {
+            let parsed = uuid::Uuid::parse_str(&s)
+                .map_err(|_| "session id must be a UUID".to_string())?
+                .to_string();
+            if sessions
+                .map
+                .lock()
+                .map_err(|e| e.to_string())?
+                .contains_key(&parsed)
+            {
+                return Err("session id already in use".to_string());
+            }
+            parsed
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    };
+
     let kubeconfig_path = if let Some(name) = name.filter(|s| !s.is_empty()) {
         let project = project_or_default(project);
         let pass = pass_opt(passphrase);
@@ -806,7 +835,6 @@ pub async fn terminal_spawn(
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
     let event_name = format!("terminal:data:{}", session_id);
     let exit_event = format!("terminal:exit:{}", session_id);
 
@@ -970,6 +998,19 @@ mod tests {
         // A firehose must bound memory and latency without waiting for the timer.
         assert!(should_flush(FLUSH_BYTES, Duration::from_millis(0)));
         assert!(should_flush(FLUSH_BYTES * 4, Duration::from_millis(0)));
+    }
+
+    #[test]
+    fn caller_supplied_session_ids_must_be_uuids() {
+        // The id is interpolated into event names and used as the session map
+        // key, so anything that isn't a UUID is rejected rather than sanitized.
+        assert!(uuid::Uuid::parse_str("terminal:data:other").is_err());
+        assert!(uuid::Uuid::parse_str("../../etc/passwd").is_err());
+        assert!(uuid::Uuid::parse_str("").is_err());
+        assert!(uuid::Uuid::parse_str("6f1a1e64-not-a-uuid").is_err());
+
+        let ok = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+        assert_eq!(uuid::Uuid::parse_str(ok).unwrap().to_string(), ok);
     }
 
     #[test]

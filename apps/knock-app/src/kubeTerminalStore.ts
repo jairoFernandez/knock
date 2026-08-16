@@ -72,6 +72,8 @@ export interface TerminalEntry {
   lastWriteAt: number;
   /** Pending rAF handle coalescing a burst of resize notifications. */
   resizeFrame: number | null;
+  /** Tears down a focus attempt still waiting for the container to be laid out. */
+  pendingFocus: (() => void) | null;
   /** Geometry last sent to the PTY, so identical resizes aren't re-sent. */
   ptyCols: number;
   ptyRows: number;
@@ -342,6 +344,7 @@ class Store {
       color: args.color ?? nextColor(usedColors),
       lastWriteAt: 0,
       resizeFrame: null,
+      pendingFocus: null,
       ptyCols: 0,
       ptyRows: 0,
     };
@@ -431,20 +434,6 @@ class Store {
       };
       const cols = entry.term.cols || 80;
       const rows = entry.term.rows || 24;
-      const sessionId = await invoke<string>("terminal_spawn", {
-        name: entry.name,
-        project: entry.project,
-        passphrase: e.initialPassphrase ?? null,
-        cwd: entry.cwd,
-        cols,
-        rows,
-        shell: entry.shell ?? "auto",
-      });
-      entry.sessionId = sessionId;
-      // Record what the PTY was created with so the first resize only fires if
-      // the layout actually differs from the spawn geometry.
-      entry.ptyCols = cols;
-      entry.ptyRows = rows;
 
       // Clear any bracketed-paste mode left latched by a previous process in
       // this terminal. The flag lives in xterm's parser, not in the shell, so a
@@ -453,6 +442,12 @@ class Store {
       // shell prints them literally. Written into the emulator, not the PTY.
       entry.term.write("\x1b[?2004l");
 
+      // Subscribe before spawning. The backend starts reading the PTY as soon
+      // as the shell exists, so registering listeners on the id it returned
+      // dropped whatever the shell emitted in between — losing the opening
+      // prompt or the redraw that follows a signal. Generating the id here
+      // lets the listeners exist first.
+      const sessionId = cryptoRandomUuid();
       const dataEvt = `terminal:data:${sessionId}`;
       const exitEvt = `terminal:exit:${sessionId}`;
       const u1 = await listen<string>(dataEvt, (e) => {
@@ -466,13 +461,37 @@ class Store {
       });
       entry.unlisten.push(u1, u2);
 
-      // Flush pending input typed before sessionId existed.
-      if (e.pending && e.pending.length) {
-        const flush = e.pending.join("");
+      try {
+        await invoke<string>("terminal_spawn", {
+          name: entry.name,
+          project: entry.project,
+          passphrase: e.initialPassphrase ?? null,
+          cwd: entry.cwd,
+          cols,
+          rows,
+          shell: entry.shell ?? "auto",
+          sessionId,
+        });
+      } catch (err) {
+        // Spawn failed, so nothing will ever emit on these events.
+        u1();
+        u2();
+        entry.unlisten = entry.unlisten.filter((u) => u !== u1 && u !== u2);
+        throw err;
+      }
+
+      entry.sessionId = sessionId;
+      // Record what the PTY was created with so the first resize only fires if
+      // the layout actually differs from the spawn geometry.
+      entry.ptyCols = cols;
+      entry.ptyRows = rows;
+
+      // Drop anything typed before the shell existed rather than replaying it.
+      // There was no prompt to receive those keys, and delivering them now
+      // injects stray characters into the first real prompt — the shell then
+      // reports them as an unknown command.
+      if (e.pending) {
         e.pending = [];
-        await invoke("terminal_write", { sessionId, data: flush }).catch(
-          () => undefined,
-        );
       }
     } catch (err) {
       entry.term.write(`\r\n[failed to spawn shell: ${String(err)}]\r\n`);
@@ -489,6 +508,10 @@ class Store {
     if (entry.resizeFrame !== null) {
       cancelAnimationFrame(entry.resizeFrame);
       entry.resizeFrame = null;
+    }
+    if (entry.pendingFocus) {
+      entry.pendingFocus();
+      entry.pendingFocus = null;
     }
     for (const u of entry.unlisten) {
       try {
@@ -585,26 +608,43 @@ class Store {
   focusLeaf(termId: string) {
     const entry = this.terminals.get(termId);
     if (!entry) return;
-    // xterm's textarea only takes focus once the terminal has been laid out. On
-    // the very first terminal the focus call lands before the container has a
-    // size, so it silently does nothing and the pane looks inert until the user
-    // opens a second tab. Retry on the next frame when the DOM isn't ready yet.
-    const attempt = (retriesLeft: number) => {
-      const connected = entry.container.isConnected;
-      const sized = entry.container.clientHeight > 0;
-      if (connected && sized) {
-        try {
-          entry.term.focus();
-        } catch {
-          /* no-op */
-        }
-        return;
+
+    // xterm's textarea only takes focus once the terminal has been laid out.
+    // On the very first terminal the call lands before the container has a
+    // size, so it silently does nothing and the pane looks inert until the
+    // user clicks or opens another tab.
+    //
+    // Waiting a fixed number of frames is not enough: on a cold start the
+    // webview can take arbitrarily long to lay out, and once the retries run
+    // out the pane stays dead. Observe the container instead and focus on the
+    // first measurement that has a real size.
+    if (entry.pendingFocus) {
+      entry.pendingFocus();
+      entry.pendingFocus = null;
+    }
+
+    const tryFocus = (): boolean => {
+      if (!entry.container.isConnected) return false;
+      const { clientWidth, clientHeight } = entry.container;
+      if (clientWidth <= 0 || clientHeight <= 0) return false;
+      try {
+        entry.term.focus();
+      } catch {
+        return false;
       }
-      if (retriesLeft > 0) {
-        requestAnimationFrame(() => attempt(retriesLeft - 1));
-      }
+      return true;
     };
-    attempt(10);
+
+    if (tryFocus()) return;
+
+    const ro = new ResizeObserver(() => {
+      if (tryFocus()) {
+        ro.disconnect();
+        entry.pendingFocus = null;
+      }
+    });
+    ro.observe(entry.container);
+    entry.pendingFocus = () => ro.disconnect();
   }
 
   /**
@@ -714,6 +754,33 @@ function cryptoRandom(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * A real UUID, unlike `cryptoRandom`'s fallback. The backend rejects a session
+ * id that doesn't parse as one, so this is used for ids that cross the IPC
+ * boundary rather than for local element keys.
+ */
+function cryptoRandomUuid(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // RFC 4122 v4 layout, filled from getRandomValues when available.
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+    16,
+    20,
+  )}-${hex.slice(20)}`;
 }
 
 function decodeBase64(b64: string): Uint8Array {
