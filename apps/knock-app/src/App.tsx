@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Tree } from "./Tree";
+import { Tree, type TreeView } from "./Tree";
 import { Editor } from "./Editor";
 import { ResponseView } from "./ResponseView";
 import { NewWorkspaceModal } from "./NewWorkspaceModal";
@@ -195,6 +195,7 @@ export function App() {
   const [toolsWidth, setToolsWidth] = usePersistedNumber("knock.layout.tools", 320);
   const [terminalDockHeight, setTerminalDockHeight] = usePersistedNumber("knock.layout.terminalDock", 300);
   const [activeTool, setActiveTool] = usePersistedString<ToolKey>("knock.layout.toolsTab", null);
+  const [treeView, setTreeView] = usePersistedString<TreeView>("knock.layout.treeView", "flat");
   const [terminalSpawnArgs, setTerminalSpawnArgs] = useState<KubeTerminalSpawnArgs | null>(null);
   const [terminalDockExpanded, setTerminalDockExpanded] = useState(true);
   const [terminalDockMaximized, setTerminalDockMaximized] = useState(false);
@@ -483,6 +484,37 @@ export function App() {
     selected === "openapi/spec.json" || selected === "openapi/spec.yaml";
   const [showOpenApiImport, setShowOpenApiImport] = useState(false);
 
+  // Agents and the CLI edit files and append runs while the app is in the
+  // background; pick those up when the window comes back.
+  useEffect(() => {
+    if (!workspace) return;
+    const root = workspace.root;
+    const onFocus = () => {
+      void refreshTree(root);
+      if (!selected || !isRequest) return;
+      invoke<{ at: number; response: ResponseDto }[]>("load_history", { root, rel: selected })
+        .then((entries) => {
+          setRuns((r) => {
+            const known = r[selected];
+            const lastKnown = known?.[known.length - 1]?.at ?? 0;
+            const lastOnDisk = entries[entries.length - 1]?.at ?? 0;
+            if (lastOnDisk <= lastKnown) return r;
+            setViewIdx((v) => {
+              const next = { ...v };
+              delete next[selected];
+              return next;
+            });
+            return { ...r, [selected]: entries };
+          });
+        })
+        .catch(() => {
+          /* non-fatal */
+        });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [workspace, selected, isRequest]);
+
   useEffect(() => {
     if (!workspace || !selected) return;
     setError(null);
@@ -710,8 +742,8 @@ export function App() {
       globalMode === "kube"
         ? `minmax(0, 1fr)${toolsCols}`
         : isMockMode
-          ? `44px 1fr 4px ${responseWidth}px${toolsCols}`
-          : `44px ${sidebarWidth}px 4px 1fr 4px ${responseWidth}px${toolsCols}`,
+          ? `44px minmax(320px, 1fr) 4px minmax(0, ${responseWidth}px)${toolsCols}`
+          : `44px ${sidebarWidth}px 4px minmax(360px, 1fr) 4px minmax(0, ${responseWidth}px)${toolsCols}`,
   };
   if (terminalDockRows) {
     appStyle.gridTemplateRows = terminalDockRows;
@@ -930,7 +962,23 @@ export function App() {
           <>
             <div className="panel-header sidebar-header">
               <span>Workspace</span>
-              <div style={{ display: "flex", gap: 4 }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <div className="sidebar-view-toggle" role="group" aria-label="Requests view">
+                  <button
+                    className={treeView !== "tree" ? "active" : ""}
+                    title="Flat list grouped by collection (like Postman)"
+                    onClick={() => setTreeView("flat")}
+                  >
+                    List
+                  </button>
+                  <button
+                    className={treeView === "tree" ? "active" : ""}
+                    title="Folder structure"
+                    onClick={() => setTreeView("tree")}
+                  >
+                    Tree
+                  </button>
+                </div>
                 <button
                   className="sidebar-add"
                   title="Import OpenAPI spec"
@@ -949,6 +997,7 @@ export function App() {
             </div>
             {workspace && (
               <Tree
+                view={treeView ?? "flat"}
                 entries={entries}
                 directories={directories}
                 colors={colors}
@@ -1208,7 +1257,10 @@ export function App() {
           />
         )}
         {globalMode === "requests" && projectMode === "mock" && workspace && (
-          <MockView workspaceRoot={workspace.root} />
+          <MockView
+            workspaceRoot={workspace.root}
+            onTreeChanged={() => refreshTree(workspace.root)}
+          />
         )}
         {globalMode === "requests" && projectMode !== "mock" && !selected && <div className="empty">Select a request from the tree.</div>}
         {globalMode === "requests" && projectMode !== "mock" && selected && isRequest && form && (
@@ -1356,6 +1408,9 @@ export function App() {
           root={workspace.root}
           initialKind={showNewEntry}
           initialPath={newEntryPath}
+          folders={directories
+            .filter((d) => d.startsWith("requests/"))
+            .map((d) => d.slice("requests/".length))}
           onCancel={() => {
             setShowNewEntry(false);
             setNewEntryPath("");

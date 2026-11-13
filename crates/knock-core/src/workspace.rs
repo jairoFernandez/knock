@@ -31,6 +31,7 @@ pub fn init_at(parent: &Path, name: &str, with_git: bool) -> Result<PathBuf, Wor
         format!("name = \"{name}\"\ndefault_env = \"local\"\n"),
     )?;
     std::fs::write(root.join(".gitignore"), "/.knock/\n*.local.toml\n")?;
+    crate::agents::write_agent_docs(&root, false)?;
     std::fs::write(
         root.join("environments").join("local.toml"),
         "# environment variables for local development\nbase_url = \"\"\n",
@@ -89,6 +90,54 @@ impl Workspace {
         self.root.join("requests")
     }
 
+    /// Accepts `requests/a/b.toml`, `a/b.toml`, `a/b` or an absolute path.
+    pub fn find_request(&self, reference: &str) -> Option<PathBuf> {
+        let r = reference.trim();
+        let with_ext = if r.ends_with(".toml") {
+            r.to_string()
+        } else {
+            format!("{r}.toml")
+        };
+        let as_path = PathBuf::from(&with_ext);
+        if !as_path.is_absolute() && with_ext.split(['/', '\\']).any(|s| s == "..") {
+            return None;
+        }
+        let candidates = [
+            as_path.clone(),
+            self.root.join(&with_ext),
+            self.requests_dir().join(&with_ext),
+        ];
+        candidates.into_iter().find(|p| p.is_file())
+    }
+
+    /// Accepts `flows/x.toml`, `x.toml` or `x`.
+    pub fn find_flow(&self, reference: &str) -> Option<PathBuf> {
+        let r = reference.trim();
+        let with_ext = if r.ends_with(".toml") {
+            r.to_string()
+        } else {
+            format!("{r}.toml")
+        };
+        [
+            PathBuf::from(&with_ext),
+            self.root.join(&with_ext),
+            self.root.join("flows").join(&with_ext),
+        ]
+        .into_iter()
+        .find(|p| p.is_file())
+    }
+
+    /// Path relative to the root with forward slashes.
+    pub fn rel(&self, path: &Path) -> String {
+        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+        canon
+            .strip_prefix(&root)
+            .unwrap_or(&canon)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     pub fn environment_path(&self, name: &str) -> Option<PathBuf> {
         let env_dir = self.root.join("environments");
         let local = env_dir.join(format!("{name}.local.toml"));
@@ -142,6 +191,7 @@ mod tests {
         assert!(root.join("requests").is_dir());
         assert!(root.join("flows").is_dir());
         assert!(root.join("mocks").is_dir());
+        assert!(root.join("AGENTS.md").is_file());
     }
 
     #[test]

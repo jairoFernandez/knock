@@ -7,6 +7,7 @@ interface Props {
   root: string;
   initialKind?: Kind;
   initialPath?: string;
+  folders?: string[];
   onCreated: (rel: string, kind: Kind) => void;
   onCancel: () => void;
 }
@@ -19,32 +20,20 @@ const KINDS: { value: Kind; label: string; placeholder: string; hint: string }[]
   { value: "environment", label: "Environment", placeholder: "staging", hint: "saved as environments/<path>.toml" },
 ];
 
-function sanitizeSegment(seg: string): string {
-  return seg
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    || "index";
-}
-
-const ID_RE = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{24,})$/i;
-
-function isIdSegment(s: string): boolean {
-  return ID_RE.test(s);
-}
-
 interface UrlDerivation {
-  path: string;
   host: string;
   name: string;
 }
 
-function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
+const NOISE_RE = /^(api|v\d+)$/i;
+
+// Postman-style: one folder per host ("collection"), one flat file per request,
+// named after the meaningful tail of the URL path.
+function deriveFromUrl(raw: string): UrlDerivation | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  const verb = method.toLowerCase();
 
-  // Strip a leading template variable like {{base_url}} so it does not
-  // get parsed as the host. Treat the remainder as a path under no host.
+  // A leading template variable like {{base_url}} is not a host.
   const templateLead = trimmed.match(/^\{\{\s*[^}]+\s*\}\}/);
   let host = "";
   let pathPart: string;
@@ -62,41 +51,55 @@ function deriveFromUrl(raw: string, method: string): UrlDerivation | null {
       return null;
     }
     host = u.host;
-    pathPart = u.pathname + (u.search || "");
+    pathPart = u.pathname;
   }
 
-  // Drop query string, keep path only.
-  const pathOnly = pathPart.split("?")[0];
-  const rawSegments = pathOnly.split("/").filter(Boolean);
-  const segments = rawSegments.map(sanitizeSegment);
+  const segments = pathPart
+    .split("?")[0]
+    .split("/")
+    .filter(Boolean)
+    .map((seg) => {
+      try {
+        return decodeURIComponent(seg);
+      } catch {
+        return seg;
+      }
+    });
+  const meaningful = segments.filter((seg) => !NOISE_RE.test(seg));
+  const tail = (meaningful.length > 0 ? meaningful : segments).slice(-2);
+  return { host, name: tail.length > 0 ? tail.join("/") : host || "/" };
+}
 
-  const prefix = host ? `${host}/` : "";
-  if (segments.length === 0) {
-    return { path: `${prefix}${verb}`.replace(/\/+$/, ""), host, name: "/" };
-  }
-  const last = segments[segments.length - 1];
-  const lastRaw = rawSegments[rawSegments.length - 1];
-  if (isIdSegment(last)) {
-    const folders = segments.slice(0, -1).join("/");
-    const folderPart = folders ? `${folders}/` : "";
-    return {
-      path: `${prefix}${folderPart}${last}`,
-      host,
-      name: `/${lastRaw}`,
-    };
-  }
-  const folders = segments.join("/");
-  return { path: `${prefix}${folders}/${verb}`, host, name: "/" };
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function joinPath(folder: string, file: string): string {
+  const f = folder.trim().replace(/^\/+|\/+$/g, "");
+  return f ? `${f}/${file}` : file;
 }
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-export function NewEntryModal({ root, initialKind = "request", initialPath = "", onCreated, onCancel }: Props) {
+export function NewEntryModal({
+  root,
+  initialKind = "request",
+  initialPath = "",
+  folders = [],
+  onCreated,
+  onCancel,
+}: Props) {
   const [kind, setKind] = useState<Kind>(initialKind);
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("");
   const [path, setPath] = useState(initialPath);
-  const [pathEdited, setPathEdited] = useState(initialPath !== "");
+  const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
+  const [folder, setFolder] = useState(initialPath.replace(/\/+$/, ""));
+  const [folderEdited, setFolderEdited] = useState(initialPath !== "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -104,18 +107,21 @@ export function NewEntryModal({ root, initialKind = "request", initialPath = "",
   const isRequest = kind === "request";
   const isFolder = kind === "folder";
 
-  const derivation = isRequest ? deriveFromUrl(url, method) : null;
+  const derivation = isRequest ? deriveFromUrl(url) : null;
 
   useEffect(() => {
     if (!isRequest) return;
-    if (pathEdited) return;
-    setPath(derivation?.path ?? "");
-  }, [derivation?.path, isRequest, pathEdited]);
+    if (!nameEdited) setName(derivation?.name ?? "");
+    if (!folderEdited) setFolder(derivation?.host ?? "");
+  }, [derivation?.name, derivation?.host, isRequest, nameEdited, folderEdited]);
+
+  const requestFile = `${method.toLowerCase()}-${slugify(name) || "request"}`;
+  const requestPath = joinPath(folder, requestFile);
 
   async function create() {
     setError(null);
-    const finalPath = path.trim();
-    if (!finalPath) return setError("Enter a path (or fill the URL to auto-suggest one).");
+    const finalPath = isRequest ? requestPath : path.trim();
+    if (!finalPath) return setError("Enter a path.");
     setBusy(true);
     try {
       if (isFolder) {
@@ -132,7 +138,7 @@ export function NewEntryModal({ root, initialKind = "request", initialPath = "",
           rel: finalPath,
           url: isRequest && url.trim() ? url.trim() : null,
           method: isRequest ? method : null,
-          name: isRequest ? derivation?.name ?? null : null,
+          name: isRequest ? name.trim() || null : null,
         });
         onCreated(rel, kind);
       }
@@ -142,6 +148,10 @@ export function NewEntryModal({ root, initialKind = "request", initialPath = "",
       setBusy(false);
     }
   }
+
+  const onEnter = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") create();
+  };
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -163,56 +173,78 @@ export function NewEntryModal({ root, initialKind = "request", initialPath = "",
           ))}
         </div>
 
-        {isRequest && (
-          <label>
-            URL <span className="modal-label-faint">(optional — auto-derives path)</span>
-            <div className="modal-url-row">
-              <select
-                className="modal-method-select"
-                value={method}
-                onChange={(e) => {
-                  setMethod(e.target.value);
-                  setPathEdited(false);
-                }}
-              >
-                {METHODS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+        {isRequest ? (
+          <>
+            <label>
+              URL <span className="modal-label-faint">(optional — you can fill it in the editor)</span>
+              <div className="modal-url-row">
+                <select
+                  className="modal-method-select"
+                  value={method}
+                  onChange={(e) => setMethod(e.target.value)}
+                >
+                  {METHODS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://fakestoreapi.com/products/1"
+                  autoFocus
+                  onKeyDown={onEnter}
+                />
+              </div>
+            </label>
+            <label>
+              Name
               <input
                 type="text"
-                value={url}
+                value={name}
                 onChange={(e) => {
-                  setUrl(e.target.value);
-                  setPathEdited(false);
+                  setName(e.target.value);
+                  setNameEdited(true);
                 }}
-                placeholder="https://fakestoreapi.com/products/1"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") create();
-                }}
+                placeholder="List users"
+                onKeyDown={onEnter}
               />
-            </div>
+            </label>
+            <label>
+              Folder <span className="modal-label-faint">(like a Postman collection — empty for top level)</span>
+              <input
+                type="text"
+                value={folder}
+                list="new-entry-folders"
+                onChange={(e) => {
+                  setFolder(e.target.value);
+                  setFolderEdited(true);
+                }}
+                placeholder="api.example.com"
+                onKeyDown={onEnter}
+              />
+              <datalist id="new-entry-folders">
+                {folders.map((f) => (
+                  <option key={f} value={f} />
+                ))}
+              </datalist>
+              <span className="modal-hint">saved as requests/{requestPath}.toml</span>
+            </label>
+          </>
+        ) : (
+          <label>
+            Path
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={config.placeholder}
+              autoFocus
+              onKeyDown={onEnter}
+            />
+            <span className="modal-hint">{config.hint}</span>
           </label>
         )}
-
-        <label>
-          Path
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => {
-              setPath(e.target.value);
-              setPathEdited(true);
-            }}
-            placeholder={config.placeholder}
-            autoFocus={!isRequest}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") create();
-            }}
-          />
-          <span className="modal-hint">{config.hint}</span>
-        </label>
 
         {error && <div className="error">{error}</div>}
 

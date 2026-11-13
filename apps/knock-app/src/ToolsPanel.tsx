@@ -566,33 +566,96 @@ function UrlTool() {
 
 /* ---------- Random ---------- */
 
-type RandomMode = "uuid" | "uuidv7" | "hex" | "base64" | "password";
+type RandomMode = "uuid" | "uuidv7" | "hex" | "base64" | "string";
+
+interface CharOpts {
+  upper: boolean;
+  lower: boolean;
+  digits: boolean;
+  symbols: boolean;
+  symbolSet: string;
+  excludeAmbiguous: boolean;
+  requireEach: boolean;
+  extra: string;
+}
+
+const DEFAULT_SYMBOLS = "!@#$%^&*()-_=+[]{};:,.<>?/~";
+const AMBIGUOUS = "0OoIl1|`'\"";
+
+const DEFAULT_CHAR_OPTS: CharOpts = {
+  upper: true,
+  lower: true,
+  digits: true,
+  symbols: true,
+  symbolSet: DEFAULT_SYMBOLS,
+  excludeAmbiguous: true,
+  requireEach: true,
+  extra: "",
+};
+
+const STRING_PRESETS: { label: string; length: number; opts: Partial<CharOpts> }[] = [
+  { label: "Password", length: 20, opts: { upper: true, lower: true, digits: true, symbols: true, requireEach: true } },
+  { label: "Alphanumeric", length: 16, opts: { upper: true, lower: true, digits: true, symbols: false } },
+  { label: "Letters", length: 12, opts: { upper: true, lower: true, digits: false, symbols: false } },
+  { label: "PIN", length: 6, opts: { upper: false, lower: false, digits: true, symbols: false, excludeAmbiguous: false } },
+  { label: "URL-safe token", length: 32, opts: { upper: true, lower: true, digits: true, symbols: true, symbolSet: "-_", excludeAmbiguous: false, requireEach: false } },
+];
 
 function RandomTool() {
-  const [mode, setMode] = usePersistedField<RandomMode>("knock.tools.random.mode", "uuid");
+  const [storedMode, setMode] = usePersistedField<RandomMode | "password">("knock.tools.random.mode", "uuid");
+  const mode: RandomMode = storedMode === "password" ? "string" : storedMode;
   const [length, setLength] = usePersistedField<number>("knock.tools.random.length", 32);
+  const [count, setCount] = usePersistedField<number>("knock.tools.random.count", 1);
+  const [storedOpts, setOpts] = usePersistedField<CharOpts>("knock.tools.random.charOpts", DEFAULT_CHAR_OPTS);
+  const opts: CharOpts = { ...DEFAULT_CHAR_OPTS, ...storedOpts };
   const [output, setOutput] = usePersistedField<string>("knock.tools.random.output", "");
+  const [error, setError] = useState<string | null>(null);
   const history = useHistory("knock.tools.random.history");
 
+  const setOpt = <K extends keyof CharOpts>(k: K, v: CharOpts[K]) => setOpts({ ...opts, [k]: v });
+  const charset = mode === "string" ? buildCharset(opts) : null;
+
   function generate() {
-    const v = genRandom(mode, length);
-    setOutput(v);
-    history.push(mode, v);
+    setError(null);
+    try {
+      const lines: string[] = [];
+      for (let i = 0; i < count; i++) lines.push(genRandom(mode, length, opts));
+      const v = lines.join("\n");
+      setOutput(v);
+      history.push(mode, v);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   return (
     <>
       <div className="tools-tabs tools-tabs-wrap">
-        {(["uuid", "uuidv7", "hex", "base64", "password"] as RandomMode[]).map((m) => (
+        {(["uuid", "uuidv7", "hex", "base64", "string"] as RandomMode[]).map((m) => (
           <button key={m} className={mode === m ? "active" : ""} onClick={() => setMode(m)}>
             {m}
           </button>
         ))}
       </div>
+      {mode === "string" && (
+        <div className="tools-tabs tools-tabs-wrap">
+          {STRING_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => {
+                setLength(p.length);
+                setOpts({ ...DEFAULT_CHAR_OPTS, ...p.opts });
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
       {mode !== "uuid" && mode !== "uuidv7" && (
         <div className="tools-row">
           <label className="tools-label" style={{ flex: 1 }}>
-            Length
+            {mode === "string" ? "Length (chars)" : "Length (bytes)"}
           </label>
           <input
             type="number"
@@ -604,9 +667,99 @@ function RandomTool() {
           />
         </div>
       )}
+      {mode === "string" && (
+        <>
+          <div className="tools-row tools-row-wrap">
+            <label className="tools-checkbox">
+              <input type="checkbox" checked={opts.upper} onChange={(e) => setOpt("upper", e.target.checked)} />
+              Uppercase (A-Z)
+            </label>
+            <label className="tools-checkbox">
+              <input type="checkbox" checked={opts.lower} onChange={(e) => setOpt("lower", e.target.checked)} />
+              Lowercase (a-z)
+            </label>
+            <label className="tools-checkbox">
+              <input type="checkbox" checked={opts.digits} onChange={(e) => setOpt("digits", e.target.checked)} />
+              Digits (0-9)
+            </label>
+            <label className="tools-checkbox">
+              <input type="checkbox" checked={opts.symbols} onChange={(e) => setOpt("symbols", e.target.checked)} />
+              Symbols
+            </label>
+          </div>
+          {opts.symbols && (
+            <div className="tools-row">
+              <label className="tools-label" style={{ flex: 1 }}>
+                Symbol set
+              </label>
+              <input
+                type="text"
+                className="tools-input"
+                value={opts.symbolSet}
+                onChange={(e) => setOpt("symbolSet", e.target.value)}
+                spellCheck={false}
+                style={{ fontFamily: "ui-monospace, monospace" }}
+              />
+              <button onClick={() => setOpt("symbolSet", DEFAULT_SYMBOLS)} title="Reset symbol set">
+                ↺
+              </button>
+            </div>
+          )}
+          <div className="tools-row">
+            <label className="tools-label" style={{ flex: 1 }}>
+              Extra chars
+            </label>
+            <input
+              type="text"
+              className="tools-input"
+              value={opts.extra}
+              onChange={(e) => setOpt("extra", e.target.value)}
+              placeholder="e.g. ñáé"
+              spellCheck={false}
+            />
+          </div>
+          <div className="tools-row tools-row-wrap">
+            <label className="tools-checkbox" title={`Removes ${AMBIGUOUS}`}>
+              <input
+                type="checkbox"
+                checked={opts.excludeAmbiguous}
+                onChange={(e) => setOpt("excludeAmbiguous", e.target.checked)}
+              />
+              Exclude ambiguous (0 O l 1 I |)
+            </label>
+            <label className="tools-checkbox">
+              <input
+                type="checkbox"
+                checked={opts.requireEach}
+                onChange={(e) => setOpt("requireEach", e.target.checked)}
+              />
+              At least one of each selected type
+            </label>
+          </div>
+          <div className="tools-hint">
+            {charset && charset.all.length > 0
+              ? `${charset.all.length} possible chars · ~${Math.floor(length * Math.log2(charset.all.length))} bits of entropy`
+              : "Select at least one character type."}
+          </div>
+        </>
+      )}
+      <div className="tools-row">
+        <label className="tools-label" style={{ flex: 1 }}>
+          How many
+        </label>
+        <input
+          type="number"
+          className="tools-input"
+          min={1}
+          max={500}
+          value={count}
+          onChange={(e) => setCount(Math.max(1, Math.min(500, Number(e.target.value) || 1)))}
+        />
+      </div>
       <button className="tools-generate" onClick={generate}>
         Generate
       </button>
+      {error && <div className="tools-error">{error}</div>}
       <div className="tools-output-header">
         <span>Output</span>
         <CopyButton text={output} />
@@ -622,7 +775,53 @@ function RandomTool() {
   );
 }
 
-function genRandom(mode: RandomMode, length: number): string {
+function buildCharset(o: CharOpts): { groups: string[]; all: string } {
+  const strip = (s: string) => {
+    const uniq = Array.from(new Set(Array.from(s)));
+    return (o.excludeAmbiguous ? uniq.filter((c) => !AMBIGUOUS.includes(c)) : uniq).join("");
+  };
+  const groups = [
+    o.upper ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" : "",
+    o.lower ? "abcdefghijklmnopqrstuvwxyz" : "",
+    o.digits ? "0123456789" : "",
+    o.symbols ? o.symbolSet : "",
+    o.extra,
+  ]
+    .map(strip)
+    .filter(Boolean);
+  return { groups, all: strip(groups.join("")) };
+}
+
+/** Uniform index in [0, n) — rejection sampling avoids modulo bias. */
+function randomIndex(n: number): number {
+  const limit = Math.floor(0x100000000 / n) * n;
+  const buf = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(buf);
+    if (buf[0] < limit) return buf[0] % n;
+  }
+}
+
+function randomString(length: number, o: CharOpts): string {
+  const { groups, all } = buildCharset(o);
+  if (!all) throw new Error("Select at least one character type.");
+  const chars = Array.from(all);
+  const out: string[] = [];
+  if (o.requireEach && length >= groups.length) {
+    for (const g of groups) {
+      const gc = Array.from(g);
+      out.push(gc[randomIndex(gc.length)]);
+    }
+  }
+  while (out.length < length) out.push(chars[randomIndex(chars.length)]);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = randomIndex(i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out.join("");
+}
+
+function genRandom(mode: RandomMode, length: number, opts: CharOpts): string {
   if (mode === "uuid") {
     if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
       return crypto.randomUUID();
@@ -660,13 +859,7 @@ function genRandom(mode: RandomMode, length: number): string {
     for (const b of bytes) bin += String.fromCharCode(b);
     return btoa(bin);
   }
-  // password — printable ASCII excluding ambiguous chars
-  const chars =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+";
-  const bytes = randomBytes(length);
-  let out = "";
-  for (let i = 0; i < length; i++) out += chars[bytes[i] % chars.length];
-  return out;
+  return randomString(length, opts);
 }
 
 function randomBytes(n: number): Uint8Array {

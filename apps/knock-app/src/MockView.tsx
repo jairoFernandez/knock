@@ -59,13 +59,40 @@ interface LogEntry {
   resp_body_truncated?: boolean;
 }
 
+interface MockToken {
+  token: string;
+  description: string;
+  group: string;
+  snippet: string | null;
+}
+
 interface Props {
   workspaceRoot: string;
+  onTreeChanged?: () => void;
 }
 
 const MAX_LOGS = 500;
+const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
-export function MockView({ workspaceRoot }: Props) {
+/** Starter body: echoes path params so the user sees request tokens in action. */
+function starterBody(method: string, path: string): string {
+  const params = Array.from(path.matchAll(/[{:]([A-Za-z_][\w]*)\}?/g), (m) => m[1]);
+  const lines: string[] = [];
+  if (params.length) params.forEach((p) => lines.push(`"${p}": "{{params.${p}}}"`));
+  else lines.push(`"id": "{{uuid}}"`);
+  if (method === "GET" && !params.length) {
+    return `{\n  "page": "{{query.page|1}}",\n  "items": ["{{repeat(3)}}", {\n    "id": "{{index}}",\n    "name": "{{name.full}}",\n    "email": "{{internet.email}}"\n  }]\n}`;
+  }
+  if (method === "POST" || method === "PUT" || method === "PATCH") {
+    lines.push(`"received": "{{body}}"`);
+    lines.push(`"updatedAt": "{{date.iso}}"`);
+  } else {
+    lines.push(`"name": "{{name.full}}"`, `"createdAt": "{{date.iso}}"`);
+  }
+  return `{\n  ${lines.join(",\n  ")}\n}`;
+}
+
+export function MockView({ workspaceRoot, onTreeChanged }: Props) {
   const [status, setStatus] = useState<MockStatus>({
     running: false,
     workspace_root: null,
@@ -90,8 +117,18 @@ export function MockView({ workspaceRoot }: Props) {
   const [editorBodyKind, setEditorBodyKind] = useState<"json" | "text">("json");
   const [editorAuth, setEditorAuth] = useState<string>("");
   const [editorHeaders, setEditorHeaders] = useState<string>("");
+  const [editorDelay, setEditorDelay] = useState<string>("");
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [editorPreview, setEditorPreview] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<MockToken[]>([]);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newMethod, setNewMethod] = useState("GET");
+  const [newPath, setNewPath] = useState("");
+  const [newStatus, setNewStatus] = useState("200");
+  const [newError, setNewError] = useState<string | null>(null);
+  const [newSaving, setNewSaving] = useState(false);
   const logsRef = useRef<HTMLDivElement | null>(null);
   const autoscrollRef = useRef(true);
   const [expandedLog, setExpandedLog] = useState<number | null>(null);
@@ -130,6 +167,103 @@ export function MockView({ workspaceRoot }: Props) {
     refreshStatus();
     refreshPreview();
   }, [workspaceRoot]);
+
+  useEffect(() => {
+    invoke<MockToken[]>("mock_token_catalog")
+      .then(setTokens)
+      .catch(() => setTokens([]));
+  }, []);
+
+  const currentPort = () => {
+    const n = port.trim() ? parseInt(port, 10) : NaN;
+    return Number.isNaN(n) ? null : n;
+  };
+
+  // Routes are built at start, so a running server must restart to pick up changes.
+  const reloadIfRunning = async () => {
+    if (!sameWorkspace) return;
+    await invoke("mock_stop");
+    const s = await invoke<MockStatus>("mock_start", {
+      workspaceRoot,
+      bind: bind.trim() || null,
+      port: currentPort(),
+    });
+    setStatus(s);
+  };
+
+  const createEndpoint = async () => {
+    setNewSaving(true);
+    setNewError(null);
+    try {
+      const statusNum = parseInt(newStatus, 10);
+      const rel = await invoke<string>("mock_create_endpoint", {
+        workspaceRoot,
+        method: newMethod,
+        path: newPath,
+        name: null,
+        edit: {
+          status: Number.isNaN(statusNum) ? 200 : statusNum,
+          headers: {},
+          auth: null,
+          delay_ms: null,
+          body_json: starterBody(newMethod, newPath),
+          body_text: null,
+        } satisfies MockResponseEdit,
+      });
+      setCreating(false);
+      setNewPath("");
+      setNewStatus("200");
+      await refreshPreview();
+      onTreeChanged?.();
+      await openEditor(rel);
+      try {
+        await reloadIfRunning();
+      } catch (e) {
+        setEditorError(`created, but reload failed: ${e}`);
+      }
+    } catch (e) {
+      setNewError(String(e));
+    } finally {
+      setNewSaving(false);
+    }
+  };
+
+  const insertToken = (t: MockToken) => {
+    const el = bodyRef.current;
+    const start = el?.selectionStart ?? editorBody.length;
+    const end = el?.selectionEnd ?? editorBody.length;
+    // Inside a JSON body, bare tokens need quotes to stay valid JSON.
+    const before = editorBody.slice(0, start);
+    const quotes = (before.match(/(?<!\\)"/g) ?? []).length;
+    const insideString = quotes % 2 === 1;
+    const text =
+      t.snippet && editorBodyKind === "json" && !insideString
+        ? t.snippet
+        : editorBodyKind === "json" && !insideString
+          ? `"${t.token}"`
+          : t.token;
+    setEditorBody(before + text + editorBody.slice(end));
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const renderPreview = async () => {
+    setEditorError(null);
+    try {
+      const out = await invoke<string>("mock_render_preview", {
+        body: editorBody,
+        kind: editorBodyKind,
+      });
+      setEditorPreview(out);
+    } catch (e) {
+      setEditorPreview(null);
+      setEditorError(String(e));
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -201,6 +335,7 @@ export function MockView({ workspaceRoot }: Props) {
   const openEditor = async (rel: string) => {
     setSelectedRel(rel);
     setEditorError(null);
+    setEditorPreview(null);
     try {
       const r = await invoke<MockResponseRead>("mock_read_response", {
         workspaceRoot,
@@ -209,6 +344,7 @@ export function MockView({ workspaceRoot }: Props) {
       setEditorOrigin(r.origin);
       setEditorStatus(r.edit.status ? String(r.edit.status) : "200");
       setEditorAuth(r.edit.auth ?? "");
+      setEditorDelay(r.edit.delay_ms != null ? String(r.edit.delay_ms) : "");
       setEditorHeaders(
         Object.entries(r.edit.headers ?? {})
           .map(([k, v]) => `${k}: ${v}`)
@@ -253,11 +389,12 @@ export function MockView({ workspaceRoot }: Props) {
           }
         });
       const statusNum = parseInt(editorStatus, 10);
+      const delayNum = parseInt(editorDelay, 10);
       const edit: MockResponseEdit = {
         status: Number.isNaN(statusNum) ? 200 : statusNum,
         headers,
         auth: editorAuth.trim() || null,
-        delay_ms: null,
+        delay_ms: Number.isNaN(delayNum) || delayNum <= 0 ? null : delayNum,
         body_json: editorBodyKind === "json" ? editorBody : null,
         body_text: editorBodyKind === "text" ? editorBody : null,
       };
@@ -267,22 +404,13 @@ export function MockView({ workspaceRoot }: Props) {
         edit,
       });
       await refreshPreview();
-      setEditorOrigin("sibling");
+      if (editorOrigin === "none") setEditorOrigin("sibling");
       // hot-reload: if the server is running for this workspace, restart
       // so the new response takes effect on the next request.
-      if (sameWorkspace) {
-        try {
-          await invoke("mock_stop");
-          const portNum = port.trim() ? parseInt(port, 10) : null;
-          const s = await invoke<MockStatus>("mock_start", {
-            workspaceRoot,
-            bind: bind.trim() || null,
-            port: portNum && !Number.isNaN(portNum) ? portNum : null,
-          });
-          setStatus(s);
-        } catch (e) {
-          setEditorError(`saved, but reload failed: ${e}`);
-        }
+      try {
+        await reloadIfRunning();
+      } catch (e) {
+        setEditorError(`saved, but reload failed: ${e}`);
       }
     } catch (e) {
       setEditorError(String(e));
@@ -306,6 +434,13 @@ export function MockView({ workspaceRoot }: Props) {
       setEditorBody("");
       setEditorAuth("");
       setEditorHeaders("");
+      setEditorDelay("");
+      setEditorPreview(null);
+      try {
+        await reloadIfRunning();
+      } catch (e) {
+        setEditorError(`cleared, but reload failed: ${e}`);
+      }
     } catch (e) {
       setEditorError(String(e));
     } finally {
@@ -396,9 +531,69 @@ export function MockView({ workspaceRoot }: Props) {
           className="mock-routes"
           style={{ width: routesWidth, flex: "0 0 auto" }}
         >
-          <div className="mock-section-header">
-            Routes {preview ? `(${preview.routes.length})` : ""}
+          <div className="mock-section-header mock-routes-header">
+            <span>Routes {preview ? `(${preview.routes.length})` : ""}</span>
+            {!creating && (
+              <button
+                className="primary"
+                onClick={() => {
+                  setCreating(true);
+                  setNewError(null);
+                }}
+              >
+                + New endpoint
+              </button>
+            )}
           </div>
+          {creating && (
+            <form
+              className="mock-new-endpoint"
+              onSubmit={(e) => {
+                e.preventDefault();
+                createEndpoint();
+              }}
+            >
+              <select
+                value={newMethod}
+                onChange={(e) => setNewMethod(e.target.value)}
+              >
+                {METHODS.map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={newPath}
+                onChange={(e) => setNewPath(e.target.value)}
+                placeholder="/users/{id}"
+                autoFocus
+                className="mock-new-path"
+              />
+              <input
+                type="text"
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value)}
+                className="mock-editor-status-input"
+                title="Status"
+              />
+              <button
+                type="submit"
+                className="primary"
+                disabled={newSaving || !newPath.trim()}
+              >
+                {newSaving ? "Creating…" : "Create"}
+              </button>
+              <button type="button" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              {newError && <div className="mock-error full">{newError}</div>}
+              <div className="mock-editor-hint full">
+                Creates <code>requests/mock/…</code> pointing at this server
+                plus its response in <code>mocks/</code>. Use{" "}
+                <code>{"{id}"}</code> for path params.
+              </div>
+            </form>
+          )}
           {!preview && !previewError && <div className="empty">Loading…</div>}
           {preview && preview.routes.length === 0 && (
             <div className="empty">
@@ -482,13 +677,38 @@ export function MockView({ workspaceRoot }: Props) {
                 />
               </label>
               <label>
-                Auth scheme
+                Delay (ms)
                 <input
                   type="text"
-                  value={editorAuth}
-                  onChange={(e) => setEditorAuth(e.target.value)}
-                  placeholder="(none)"
+                  inputMode="numeric"
+                  value={editorDelay}
+                  onChange={(e) => setEditorDelay(e.target.value.replace(/\D/g, ""))}
+                  placeholder={preview?.default_delay_ms ? `${preview.default_delay_ms} (default)` : "0"}
+                  className="mock-editor-status-input"
                 />
+              </label>
+              <label>
+                Auth scheme
+                {preview && preview.auth_schemes.length > 0 ? (
+                  <select value={editorAuth} onChange={(e) => setEditorAuth(e.target.value)}>
+                    <option value="">(none)</option>
+                    {preview.auth_schemes.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                    {editorAuth && !preview.auth_schemes.includes(editorAuth) && (
+                      <option value={editorAuth}>{editorAuth} (undefined)</option>
+                    )}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={editorAuth}
+                    onChange={(e) => setEditorAuth(e.target.value)}
+                    placeholder="(none — define schemes in knock.toml)"
+                  />
+                )}
               </label>
               <label className="full">
                 Headers (one per line: <code>Name: value</code>)
@@ -511,8 +731,32 @@ export function MockView({ workspaceRoot }: Props) {
                 >
                   Text
                 </button>
+                <select
+                  className="mock-token-select"
+                  value=""
+                  onChange={(e) => {
+                    const t = tokens.find((x) => x.token === e.target.value);
+                    if (t) insertToken(t);
+                  }}
+                  title="Insert a token at the cursor"
+                >
+                  <option value="">Insert token…</option>
+                  {groupTokens(tokens).map(([group, items]) => (
+                    <optgroup key={group} label={group}>
+                      {items.map((t) => (
+                        <option key={t.token} value={t.token}>
+                          {t.token} — {t.description}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <button onClick={renderPreview} title="Render tokens as the server would">
+                  Preview
+                </button>
               </div>
               <textarea
+                ref={bodyRef}
                 value={editorBody}
                 onChange={(e) => setEditorBody(e.target.value)}
                 rows={12}
@@ -524,6 +768,19 @@ export function MockView({ workspaceRoot }: Props) {
                 className="mock-editor-body-input"
                 spellCheck={false}
               />
+              {editorPreview != null && (
+                <div className="mock-editor-preview">
+                  <div className="mock-editor-preview-header">
+                    <span>
+                      Preview — new values on every request; request tokens
+                      (params, query…) fill in on real calls
+                    </span>
+                    <button onClick={renderPreview}>↻</button>
+                    <button onClick={() => setEditorPreview(null)}>×</button>
+                  </div>
+                  <pre>{editorPreview}</pre>
+                </div>
+              )}
               {editorError && <div className="mock-error">{editorError}</div>}
               <div className="mock-editor-actions">
                 <button
@@ -533,14 +790,19 @@ export function MockView({ workspaceRoot }: Props) {
                 >
                   {editorSaving ? "Saving…" : "Save"}
                 </button>
-                {editorOrigin === "sibling" && (
+                {editorOrigin !== "none" && (
                   <button onClick={clearEditor} disabled={editorSaving}>
-                    Delete mocks file
+                    {editorOrigin === "inline" ? "Remove [mock] block" : "Delete mocks file"}
                   </button>
                 )}
                 <span className="mock-editor-hint">
-                  Saves to <code>mocks/{selectedRel}</code>. Server auto-reloads
-                  if running.
+                  Saves to{" "}
+                  <code>
+                    {editorOrigin === "inline"
+                      ? `requests/${selectedRel} [mock]`
+                      : `mocks/${selectedRel}`}
+                  </code>
+                  . Server auto-reloads if running.
                 </span>
               </div>
             </div>
@@ -616,6 +878,16 @@ export function MockView({ workspaceRoot }: Props) {
       </div>
     </div>
   );
+}
+
+function groupTokens(tokens: MockToken[]): [string, MockToken[]][] {
+  const groups = new Map<string, MockToken[]>();
+  for (const t of tokens) {
+    const list = groups.get(t.group) ?? [];
+    list.push(t);
+    groups.set(t.group, list);
+  }
+  return Array.from(groups);
 }
 
 function LogDetail({ entry }: { entry: LogEntry }) {

@@ -46,7 +46,10 @@ interface TreeProps {
   onChangeMethod?: (path: string, method: string) => void;
   onChangeName?: (path: string, name: string) => void;
   onMove?: (op: MoveOp) => void;
+  view?: TreeView;
 }
+
+export type TreeView = "tree" | "flat";
 
 const SECTIONS: { kind: SectionKind; dir: string; label: string }[] = [
   { kind: "request", dir: "requests", label: "Requests" },
@@ -60,6 +63,29 @@ interface Node {
   path: string;
   entry?: TreeEntry;
   children: Node[];
+  // Set when a chain of single-child folders is shown as one row:
+  // `path` stays the top folder (drag, collapse, delete) and `target`
+  // is the deepest one (children, rename, "add here").
+  target?: string;
+}
+
+function compact(node: Node, pendingParent: string | null): Node {
+  let tail = node;
+  const names = [node.name];
+  while (
+    tail.children.length === 1 &&
+    !tail.children[0].entry &&
+    tail.path !== pendingParent
+  ) {
+    tail = tail.children[0];
+    names.push(tail.name);
+  }
+  if (tail === node) return node;
+  return { ...tail, name: names.join("/"), path: node.path, target: tail.path };
+}
+
+function targetOf(node: Node): string {
+  return node.target ?? node.path;
 }
 
 function buildTree(entries: TreeEntry[], directories: string[]): Node {
@@ -112,6 +138,19 @@ function methodClass(method: string | null | undefined): string {
   if (m === "DELETE") return "method-delete";
   if (m === "HEAD" || m === "OPTIONS") return "method-head";
   return "method-any";
+}
+
+// Older requests were saved as `<host>/<path...>/get.toml` named "/"; show the
+// last path segment instead so the row says what it hits.
+function requestLabel(e: TreeEntry, path: string): string {
+  const name = e.name?.trim();
+  if (name && name !== "/") return name;
+  const segments = path.replace(/\.toml$/, "").split("/");
+  const base = segments[segments.length - 1];
+  if (METHODS.includes(base.toUpperCase()) && segments.length > 2) {
+    return segments[segments.length - 2];
+  }
+  return base;
 }
 
 function kindIcon(kind: EntryKind | undefined): string {
@@ -178,10 +217,12 @@ function FileRow({
   node,
   depth,
   ctx,
+  sublabel,
 }: {
   node: Node;
   depth: number;
   ctx: RenderCtx;
+  sublabel?: string;
 }) {
   const e = node.entry!;
   const isProtected = e.kind === "config";
@@ -192,7 +233,7 @@ function FileRow({
     useSortable({
       id: `f:${node.path}`,
       data: { kind: "file", path: node.path, parent: parentOf(node.path) },
-      disabled: isProtected || isEditing,
+      disabled: isProtected || isEditing || sublabel !== undefined,
     });
 
   const style: React.CSSProperties = {
@@ -202,9 +243,7 @@ function FileRow({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const label = e.kind === "request"
-    ? e.name ?? node.name.replace(/\.toml$/, "")
-    : node.name.replace(/\.toml$/, "");
+  const label = e.kind === "request" ? requestLabel(e, node.path) : node.name.replace(/\.toml$/, "");
 
   return (
     <div
@@ -272,6 +311,7 @@ function FileRow({
           }}
         >
           {label}
+          {sublabel && <span className="tree-sublabel">{sublabel}</span>}
         </span>
       )}
       <div className="tree-row-actions">
@@ -350,10 +390,10 @@ function FolderRow({
       </span>
       {isEditing ? (
         <InlineInput
-          initial={node.name}
+          initial={targetOf(node).split("/").pop() ?? node.name}
           onCommit={(v) => {
             ctx.setEditing(null);
-            ctx.onRenameInline?.(node.path, v);
+            ctx.onRenameInline?.(targetOf(node), v);
           }}
           onCancel={() => ctx.setEditing(null)}
         />
@@ -377,7 +417,7 @@ function FolderRow({
             onClick={(ev) => {
               ev.stopPropagation();
               if (isCollapsed) ctx.toggle(node.path);
-              ctx.setPending({ parent: node.path, kind: "folder" });
+              ctx.setPending({ parent: targetOf(node), kind: "folder" });
             }}
           >
             ⊕
@@ -389,7 +429,7 @@ function FolderRow({
             title="New request here"
             onClick={(ev) => {
               ev.stopPropagation();
-              ctx.onAddRequest!(node.path);
+              ctx.onAddRequest!(targetOf(node));
             }}
           >
             +
@@ -402,7 +442,7 @@ function FolderRow({
             onClick={(ev) => {
               ev.stopPropagation();
               if (isCollapsed) ctx.toggle(node.path);
-              ctx.setPending({ parent: node.path, kind: topKind });
+              ctx.setPending({ parent: targetOf(node), kind: topKind });
             }}
           >
             +
@@ -462,7 +502,10 @@ function renderChildren(
   topKind: SectionKind | null,
 ): JSX.Element[] {
   const items: JSX.Element[] = [];
-  const children = sortChildren(node, ctx.folderOrders);
+  const pendingParent = ctx.pending?.parent ?? null;
+  const children = sortChildren({ ...node, path: targetOf(node) }, ctx.folderOrders).map((c) =>
+    c.entry ? c : compact(c, pendingParent),
+  );
   const ids = children.map((c) =>
     c.entry ? `f:${c.path}` : `d:${c.path}`,
   );
@@ -482,7 +525,7 @@ function renderChildren(
           <div key={child.path}>
             <FolderRow node={child} depth={depth} ctx={ctx} topKind={topKind} />
             {!isCollapsed && renderChildren(child, depth + 1, ctx, topKind)}
-            {!isCollapsed && ctx.pending && ctx.pending.parent === child.path && (
+            {!isCollapsed && ctx.pending && ctx.pending.parent === targetOf(child) && (
               <PendingRow
                 depth={depth + 1}
                 kind={ctx.pending.kind}
@@ -504,6 +547,86 @@ function renderChildren(
     </SortableContext>,
   );
   return items;
+}
+
+interface FlatGroup {
+  folder: string;
+  items: { node: Node; sub: string }[];
+}
+
+// Postman-like: one group per top-level folder ("collection"), every request
+// inside it listed flat; deeper folders become a dim hint instead of nesting.
+function flatGroups(section: Node): FlatGroup[] {
+  const groups = new Map<string, FlatGroup>();
+  const walk = (n: Node, group: string, trail: string[]) => {
+    for (const c of n.children) {
+      if (c.entry) {
+        if (!groups.has(group)) groups.set(group, { folder: group, items: [] });
+        groups.get(group)!.items.push({ node: c, sub: trail.join("/") });
+      } else if (group === "") {
+        if (!groups.has(c.path)) groups.set(c.path, { folder: c.path, items: [] });
+        walk(c, c.path, []);
+      } else {
+        walk(c, group, [...trail, c.name]);
+      }
+    }
+  };
+  walk(section, "", []);
+  const label = (r: { node: Node }) =>
+    r.node.entry?.kind === "request" ? requestLabel(r.node.entry, r.node.path) : r.node.name;
+  for (const g of groups.values()) {
+    g.items.sort((a, b) => label(a).localeCompare(label(b)) || a.sub.localeCompare(b.sub));
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.folder === "") return -1;
+    if (b.folder === "") return 1;
+    return a.folder.localeCompare(b.folder);
+  });
+}
+
+function renderFlat(section: Node, ctx: RenderCtx): JSX.Element {
+  const groups = flatGroups(section);
+  return (
+    <SortableContext items={[]} strategy={verticalListSortingStrategy}>
+      {groups.map((g) => {
+        const rows = g.items.map(({ node, sub }) => (
+          <FileRow
+            key={node.path}
+            node={node}
+            depth={g.folder ? 2 : 1}
+            ctx={ctx}
+            sublabel={sub}
+          />
+        ));
+        if (!g.folder) return <div key="__root">{rows}</div>;
+        const groupNode: Node = {
+          name: g.folder.split("/").pop() ?? g.folder,
+          path: g.folder,
+          children: [],
+        };
+        const isCollapsed = ctx.collapsed.has(g.folder);
+        return (
+          <div key={g.folder}>
+            <FolderRow node={groupNode} depth={1} ctx={ctx} topKind="request" />
+            {!isCollapsed && rows}
+            {!isCollapsed && ctx.pending && ctx.pending.parent === g.folder && (
+              <PendingRow
+                depth={2}
+                kind={ctx.pending.kind}
+                onCommit={(name) => {
+                  const pending = ctx.pending!;
+                  ctx.setPending(null);
+                  if (pending.kind === "folder") ctx.onCreateFolder?.(pending.parent, name);
+                  else ctx.onCreateEntry?.(pending.parent, name, pending.kind);
+                }}
+                onCancel={() => ctx.setPending(null)}
+              />
+            )}
+          </div>
+        );
+      })}
+    </SortableContext>
+  );
 }
 
 function PendingRow({
@@ -550,6 +673,7 @@ export function Tree({
   onChangeMethod,
   onChangeName,
   onMove,
+  view = "tree",
 }: TreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
@@ -710,7 +834,9 @@ export function Tree({
                   </button>
                 )}
               </div>
-              {node && !isCollapsed && renderChildren(node, 1, ctx, sec.kind)}
+              {node && !isCollapsed && (view === "flat" && sec.kind === "request"
+                ? renderFlat(node, ctx)
+                : renderChildren(node, 1, ctx, sec.kind))}
               {node && !isCollapsed && pending && pending.parent === node.path && (
                 <PendingRow
                   depth={1}

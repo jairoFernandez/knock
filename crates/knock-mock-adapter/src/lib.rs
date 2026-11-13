@@ -178,6 +178,11 @@ fn extract_path(url: &str) -> Option<String> {
     None
 }
 
+/// Path as the mock server registers it (`{id}` → `:id`).
+pub fn served_path(p: &str) -> String {
+    convert_path_params(p)
+}
+
 fn convert_path_params(p: &str) -> String {
     let mut out = String::with_capacity(p.len());
     let mut chars = p.chars().peekable();
@@ -210,7 +215,7 @@ fn resolve_response(
         if let Some(body) = &m.body {
             return Ok((
                 status,
-                body_from_mock(body)?,
+                body_from_mock(body, &m.headers)?,
                 origin_hint.unwrap_or(BodySource::Inline),
             ));
         }
@@ -237,8 +242,21 @@ fn resolve_response(
     Ok((status, ResponseBody::Json { json: stub }, BodySource::Stub))
 }
 
-fn body_from_mock(b: &MockBody) -> Result<ResponseBody> {
+fn body_from_mock(b: &MockBody, headers: &indexmap::IndexMap<String, String>) -> Result<ResponseBody> {
     if let Some(t) = &b.text {
+        // The app stores JSON bodies as compact text; serve them as JSON so
+        // typed tokens (`{{number.int}}`, `{{body}}`) and `repeat` work.
+        let ct = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.to_ascii_lowercase());
+        if ct.as_deref().map_or(true, |c| c.contains("json")) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+                if v.is_object() || v.is_array() {
+                    return Ok(ResponseBody::Json { json: v });
+                }
+            }
+        }
         return Ok(ResponseBody::Text { text: t.clone() });
     }
     if let Some(j) = &b.json {
@@ -373,6 +391,23 @@ mod tests {
         assert_eq!(extract_path("/already").as_deref(), Some("/already"));
         assert_eq!(extract_path("${base}/u").as_deref(), Some("/u"));
         assert!(extract_path("nope").is_none());
+    }
+
+    #[test]
+    fn json_text_body_served_as_json() {
+        let body = MockBody {
+            text: Some(r#"{"a":1}"#.into()),
+            ..Default::default()
+        };
+        let mut h = indexmap::IndexMap::new();
+        assert!(matches!(body_from_mock(&body, &h).unwrap(), ResponseBody::Json { .. }));
+        h.insert("Content-Type".into(), "text/plain".into());
+        assert!(matches!(body_from_mock(&body, &h).unwrap(), ResponseBody::Text { .. }));
+        let plain = MockBody {
+            text: Some("hello".into()),
+            ..Default::default()
+        };
+        assert!(matches!(body_from_mock(&plain, &indexmap::IndexMap::new()).unwrap(), ResponseBody::Text { .. }));
     }
 
     #[test]

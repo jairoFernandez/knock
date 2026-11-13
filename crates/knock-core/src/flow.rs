@@ -2,6 +2,7 @@ use crate::model::{Expect, Flow, Response};
 use crate::parser::ParseError;
 use crate::resolver::{self, ResolveError};
 use crate::runner::{self, RunError};
+use crate::history;
 use crate::workspace::Workspace;
 use indexmap::IndexMap;
 use std::path::Path;
@@ -20,6 +21,8 @@ pub enum FlowError {
 pub struct FlowOutcome {
     pub name: Option<String>,
     pub steps: Vec<StepOutcome>,
+    /// Steps not run because an earlier one failed.
+    pub skipped: Vec<String>,
 }
 
 impl FlowOutcome {
@@ -28,13 +31,24 @@ impl FlowOutcome {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StepOutcome {
     pub name: String,
+    /// Request reference as written in the flow (`users/create`).
+    pub request: String,
+    pub method: String,
+    pub url: String,
+    /// 0 when the request could not be resolved or sent.
     pub status: u16,
     pub elapsed_ms: u128,
     pub failures: Vec<String>,
+    /// Values captured from this step's response.
+    pub captured: IndexMap<String, String>,
+    /// Start of the response body, kept only for failed steps.
+    pub body_excerpt: Option<String>,
 }
+
+const EXCERPT_BYTES: usize = 2048;
 
 pub async fn run_flow(
     workspace: &Workspace,
@@ -53,38 +67,82 @@ pub async fn run_flow(
     let mut vars = resolver::load_env_vars(workspace, env_name)?;
     let mut outcomes = Vec::with_capacity(flow.steps.len());
 
+    let mut skipped = Vec::new();
+
     for (idx, step) in flow.steps.iter().enumerate() {
         let step_name = step
             .name
             .clone()
             .unwrap_or_else(|| format!("step-{}", idx + 1));
 
-        let request_path = resolve_request_ref(workspace, &step.request);
-        let resolved = resolver::resolve_with_vars(workspace, &request_path, &vars)?;
-        let response = runner::execute(&resolved).await?;
-
-        let failures = check_expectations(&step.expect, &response);
-        outcomes.push(StepOutcome {
-            name: step_name.clone(),
-            status: response.status,
-            elapsed_ms: response.elapsed.as_millis(),
-            failures: failures.clone(),
-        });
-
-        if !failures.is_empty() {
-            break;
+        if outcomes.iter().any(|o: &StepOutcome| !o.failures.is_empty()) {
+            skipped.push(step_name);
+            continue;
         }
 
-        if !step.capture.is_empty() {
+        let mut outcome = StepOutcome {
+            name: step_name,
+            request: step.request.clone(),
+            ..Default::default()
+        };
+
+        let request_path = resolve_request_ref(workspace, &step.request);
+        let resolved = match resolver::resolve_with_vars(workspace, &request_path, &vars) {
+            Ok(r) => r,
+            Err(e) => {
+                outcome.failures.push(format!("could not resolve request: {e}"));
+                outcomes.push(outcome);
+                continue;
+            }
+        };
+        outcome.method = resolved.method.to_uppercase();
+        outcome.url = resolved.url.clone();
+
+        let response = match runner::execute(&resolved).await {
+            Ok(r) => r,
+            Err(e) => {
+                outcome.failures.push(format!("request failed: {e}"));
+                outcomes.push(outcome);
+                continue;
+            }
+        };
+        if let Ok(rel) = request_path.strip_prefix(&workspace.root) {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let _ = history::append(
+                workspace,
+                &rel,
+                history::HistoryResponse::from_response(&outcome.method, &resolved.url, &response),
+            );
+        }
+
+        outcome.status = response.status;
+        outcome.elapsed_ms = response.elapsed.as_millis();
+        outcome.failures = check_expectations(&step.expect, &response);
+
+        if !outcome.failures.is_empty() {
+            outcome.body_excerpt = Some(excerpt(&response.body));
+        } else if !step.capture.is_empty() {
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&response.body) {
-                apply_captures(&mut vars, &step.capture, &json);
+                outcome.captured = apply_captures(&mut vars, &step.capture, &json);
+            }
+            for name in step.capture.keys() {
+                if !outcome.captured.contains_key(name) {
+                    outcome
+                        .failures
+                        .push(format!("capture '{name}' not found in response"));
+                }
+            }
+            if !outcome.failures.is_empty() {
+                outcome.body_excerpt = Some(excerpt(&response.body));
             }
         }
+        outcomes.push(outcome);
     }
 
     Ok(FlowOutcome {
         name: flow.name,
         steps: outcomes,
+        skipped,
     })
 }
 
@@ -120,12 +178,27 @@ fn apply_captures(
     vars: &mut IndexMap<String, String>,
     captures: &IndexMap<String, String>,
     json: &serde_json::Value,
-) {
+) -> IndexMap<String, String> {
+    let mut captured = IndexMap::new();
     for (name, path) in captures {
         if let Some(value) = extract_path(json, path) {
-            vars.insert(name.clone(), value);
+            vars.insert(name.clone(), value.clone());
+            captured.insert(name.clone(), value);
         }
     }
+    captured
+}
+
+fn excerpt(body: &[u8]) -> String {
+    let text = String::from_utf8_lossy(body);
+    if text.len() <= EXCERPT_BYTES {
+        return text.into_owned();
+    }
+    let mut cut = EXCERPT_BYTES;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}…", &text[..cut])
 }
 
 fn extract_path(json: &serde_json::Value, path: &str) -> Option<String> {

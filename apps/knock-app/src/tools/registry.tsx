@@ -207,7 +207,7 @@ export const TOOLS: ToolDef[] = [
     short: "RND",
     group: "generation",
     description:
-      "Generate UUID v4 / v7 (sortable), random hex bytes, base64 bytes, or password (printable, no ambiguous chars).",
+      "Generate UUID v4 / v7 (sortable), random hex bytes, base64 bytes, or strings/passwords with control over upper, lower, digits, symbols (custom set), ambiguous chars and count.",
   },
   {
     key: "mock",
@@ -215,7 +215,7 @@ export const TOOLS: ToolDef[] = [
     short: "MK",
     group: "generation",
     description:
-      "Batch generate fake names, emails, addresses, phones, UUIDs, lorem text, IPv4, or company names. Seed bodies for testing.",
+      "Batch generate fake names, emails, addresses, phones, UUIDs, lorem text, IPv4, companies or whole user objects — or write your own template with the same {{tokens}} the mock server uses (repeat lists, strings, passwords, dates).",
     Component: MockDataTool,
   },
   {

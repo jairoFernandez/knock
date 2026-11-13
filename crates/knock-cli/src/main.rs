@@ -1,8 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use knock_core::kubeconfigs;
-use knock_core::{execute, init_at, resolve, run_flow, Workspace};
+use knock_core::{author, init_at, Workspace};
 use std::path::PathBuf;
+
+mod mcp;
+mod ops;
 
 use knock_mock_adapter as mock_adapter;
 
@@ -29,14 +32,76 @@ enum Cmd {
     },
     /// Run a single request
     Run {
-        /// Path to request .toml (relative to cwd or workspace)
-        path: PathBuf,
+        /// Request: path to .toml (relative to cwd or workspace) or name under requests/
+        path: String,
         /// Override active environment
         #[arg(long, short)]
         env: Option<String>,
         /// Print resolved request without sending it
         #[arg(long)]
         dry_run: bool,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+        /// Exit with status 1 when the response is 4xx/5xx
+        #[arg(long)]
+        fail: bool,
+        /// Do not mask tokens, cookies and local-only env values in the output
+        #[arg(long)]
+        show_secrets: bool,
+    },
+    /// List requests, flows and environments
+    List {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a request file from a URL
+    New {
+        url: String,
+        /// HTTP method
+        #[arg(long, short = 'X', default_value = "GET")]
+        method: String,
+        /// Display name (defaults to the tail of the URL path)
+        #[arg(long)]
+        name: Option<String>,
+        /// Folder under requests/ (defaults to the URL host)
+        #[arg(long)]
+        folder: Option<String>,
+        /// Exact path under requests/ (overrides --folder)
+        #[arg(long)]
+        path: Option<String>,
+        /// Header, `Name: value` (repeatable)
+        #[arg(long = "header", short = 'H')]
+        headers: Vec<String>,
+        /// Body; JSON objects/arrays are stored as [body.json]
+        #[arg(long, short = 'd')]
+        data: Option<String>,
+        /// Environment that receives extracted secrets
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Keep credentials inline instead of moving them to <env>.local.toml
+        #[arg(long)]
+        keep_secrets: bool,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import requests from other formats
+    Import {
+        #[command(subcommand)]
+        action: ImportCmd,
+    },
+    /// Help coding agents work with this workspace
+    Agents {
+        #[command(subcommand)]
+        action: AgentsCmd,
+    },
+    /// Run an MCP server on stdio (`claude mcp add knock -- knock mcp`)
+    Mcp {
+        /// Workspace root (defaults to discovering from the current dir)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
     },
     /// Manage the active environment
     Env {
@@ -50,6 +115,12 @@ enum Cmd {
         /// Override active environment
         #[arg(long, short)]
         env: Option<String>,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+        /// Do not mask tokens, cookies and local-only env values in the output
+        #[arg(long)]
+        show_secrets: bool,
     },
     /// Scan tracked workspace files for likely secrets
     Check,
@@ -168,6 +239,44 @@ enum KubeCmd {
 }
 
 #[derive(Subcommand)]
+enum ImportCmd {
+    /// Turn a curl command into a request file (`-` reads it from stdin)
+    Curl {
+        /// The curl command, quoted as one argument or as separate tokens
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true, trailing_var_arg = true)]
+        command: Vec<String>,
+        /// Display name (defaults to the tail of the URL path)
+        #[arg(long)]
+        name: Option<String>,
+        /// Folder under requests/ (defaults to the URL host)
+        #[arg(long)]
+        folder: Option<String>,
+        /// Exact path under requests/ (overrides --folder)
+        #[arg(long)]
+        path: Option<String>,
+        /// Environment that receives extracted secrets
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Keep credentials inline instead of moving them to <env>.local.toml
+        #[arg(long)]
+        keep_secrets: bool,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsCmd {
+    /// Write AGENTS.md (and CLAUDE.md importing it) into the workspace
+    Init {
+        /// Overwrite an existing AGENTS.md
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum EnvCmd {
     /// Set the active environment (written to .knock/env)
     Use { name: String },
@@ -180,12 +289,112 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Init { name, no_git } => init(&name, no_git),
-        Cmd::Run { path, env, dry_run } => run(&path, env.as_deref(), dry_run).await,
+        Cmd::Run {
+            path,
+            env,
+            dry_run,
+            json,
+            fail,
+            show_secrets,
+        } => {
+            run(RunArgs {
+                reference: &path,
+                env: env.as_deref(),
+                dry_run,
+                json,
+                fail,
+                show_secrets,
+            })
+            .await
+        }
+        Cmd::List { json } => list(json),
+        Cmd::New {
+            url,
+            method,
+            name,
+            folder,
+            path,
+            headers,
+            data,
+            env,
+            keep_secrets,
+            json,
+        } => {
+            let mut req = author::NewRequest {
+                method,
+                url,
+                name,
+                ..Default::default()
+            };
+            for h in headers {
+                let (k, v) = h
+                    .split_once(':')
+                    .ok_or_else(|| anyhow!("header must look like 'Name: value', got '{h}'"))?;
+                req.headers.insert(k.trim().to_string(), v.trim().to_string());
+            }
+            if let Some((base, q)) = req.url.clone().split_once('?') {
+                req.url = base.to_string();
+                for pair in q.split('&').filter(|p| !p.is_empty()) {
+                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                    req.query.insert(k.to_string(), v.to_string());
+                }
+            }
+            req.body = data.map(|d| match serde_json::from_str::<serde_json::Value>(&d) {
+                Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => {
+                    author::NewBody::Json(v)
+                }
+                _ => author::NewBody::Text(d),
+            });
+            create_request(
+                req,
+                author::CreateOptions {
+                    folder,
+                    path,
+                    env,
+                    keep_secrets_inline: keep_secrets,
+                },
+                json,
+            )
+        }
+        Cmd::Import { action } => match action {
+            ImportCmd::Curl {
+                command,
+                name,
+                folder,
+                path,
+                env,
+                keep_secrets,
+                json,
+            } => {
+                let text = curl_text(&command)?;
+                let mut req = knock_core::curl::parse(&text)?;
+                req.name = name;
+                create_request(
+                    req,
+                    author::CreateOptions {
+                        folder,
+                        path,
+                        env,
+                        keep_secrets_inline: keep_secrets,
+                    },
+                    json,
+                )
+            }
+        },
+        Cmd::Agents { action } => match action {
+            AgentsCmd::Init { force } => agents_init(force),
+        },
+        Cmd::Mcp { workspace } => mcp::serve(workspace).await,
         Cmd::Env { action } => match action {
             EnvCmd::Use { name } => env_use(&name),
             EnvCmd::Show => env_show(),
         },
-        Cmd::Flow { name, env } => flow(&name, env.as_deref()).await,
+        Cmd::Flow {
+            name,
+            env,
+            json,
+            show_secrets,
+        } => flow(&name, env.as_deref(), json, show_secrets).await,
         Cmd::Check => check(),
         Cmd::Fmt { check } => fmt(check),
         Cmd::Kube { action } => kube(action),
@@ -273,6 +482,14 @@ async fn self_check(refresh: bool, json: bool) -> Result<()> {
 
 async fn self_update(version: Option<&str>, yes: bool) -> Result<()> {
     use knock_core::updates;
+    if std::env::current_exe()
+        .map(|p| p.to_string_lossy().contains("/Cellar/"))
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "knock was installed with Homebrew — update it with `brew upgrade knock`"
+        ));
+    }
     let repo = std::env::var("KNOCK_REPO").unwrap_or_else(|_| updates::DEFAULT_REPO.to_string());
     let release = match version {
         Some(v) => {
@@ -577,49 +794,35 @@ fn check() -> Result<()> {
     std::process::exit(2);
 }
 
-async fn flow(name: &str, env_override: Option<&str>) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let workspace = Workspace::discover(&cwd)?;
+async fn flow(name: &str, env: Option<&str>, json: bool, show_secrets: bool) -> Result<()> {
+    let workspace = discover()?;
+    let report = ops::run_flow(&workspace, name, env, show_secrets).await?;
 
-    let path = if name.contains('/') || name.ends_with(".toml") {
-        let candidate = cwd.join(name);
-        if candidate.is_file() {
-            candidate
-        } else {
-            workspace.root.join(name)
-        }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        workspace.root.join("flows").join(format!("{name}.toml"))
-    };
-
-    let env_name = env_override
-        .map(|s| s.to_string())
-        .or_else(|| workspace.active_env())
-        .or_else(|| workspace.config.default_env.clone());
-
-    let outcome = run_flow(&workspace, &path, env_name.as_deref()).await?;
-
-    if let Some(name) = &outcome.name {
-        println!("Flow: {name}");
-    }
-    let mut all_ok = true;
-    for step in &outcome.steps {
-        let mark = if step.failures.is_empty() {
-            "OK"
-        } else {
-            "FAIL"
-        };
-        println!(
-            "  [{mark:>4}] {} — {} ({} ms)",
-            step.name, step.status, step.elapsed_ms
-        );
-        for failure in &step.failures {
-            all_ok = false;
-            println!("         · {failure}");
+        if let Some(name) = &report.name {
+            println!("Flow: {name}");
+        }
+        for step in &report.steps {
+            let mark = if step.passed { "OK" } else { "FAIL" };
+            println!(
+                "  [{mark:>4}] {} — {} ({} ms)",
+                step.name, step.status, step.elapsed_ms
+            );
+            for failure in &step.failures {
+                println!("         · {failure}");
+            }
+            if let Some(body) = &step.body_excerpt {
+                println!("         body: {}", body.replace('\n', " "));
+            }
+        }
+        for name in &report.skipped {
+            println!("  [SKIP] {name}");
         }
     }
 
-    if !all_ok {
+    if !report.passed {
         std::process::exit(1);
     }
     Ok(())
@@ -633,59 +836,172 @@ fn init(name: &str, no_git: bool) -> Result<()> {
     Ok(())
 }
 
-async fn run(path: &PathBuf, env_override: Option<&str>, dry_run: bool) -> Result<()> {
+fn discover() -> Result<Workspace> {
     let cwd = std::env::current_dir()?;
-    let workspace = Workspace::discover(&cwd)
-        .with_context(|| format!("discovering workspace from {}", cwd.display()))?;
+    Workspace::discover(&cwd).with_context(|| format!("no knock workspace found from {}", cwd.display()))
+}
 
-    let abs_path = if path.is_absolute() {
-        path.clone()
-    } else {
-        let candidate = cwd.join(path);
-        if candidate.is_file() {
-            candidate
-        } else {
-            workspace.root.join(path)
+struct RunArgs<'a> {
+    reference: &'a str,
+    env: Option<&'a str>,
+    dry_run: bool,
+    json: bool,
+    fail: bool,
+    show_secrets: bool,
+}
+
+async fn run(args: RunArgs<'_>) -> Result<()> {
+    let workspace = discover()?;
+
+    if args.dry_run {
+        let req = ops::dry_run(&workspace, args.reference, args.env, args.show_secrets)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&req)?);
+            return Ok(());
         }
-    };
-
-    let env_name = env_override
-        .map(|s| s.to_string())
-        .or_else(|| workspace.active_env())
-        .or_else(|| workspace.config.default_env.clone());
-
-    let resolved = resolve(&workspace, &abs_path, env_name.as_deref())?;
-
-    if dry_run {
-        println!("{} {}", resolved.method, resolved.url);
-        for (k, v) in &resolved.headers {
+        println!("{} {}", req.method, req.url);
+        for (k, v) in &req.headers {
             println!("  {k}: {v}");
         }
-        if !resolved.query.is_empty() {
-            println!("  query: {:?}", resolved.query);
+        for (k, v) in &req.query {
+            println!("  ?{k}={v}");
+        }
+        if let Some(body) = &req.body {
+            println!();
+            println!("{}", pretty(body));
         }
         return Ok(());
     }
 
-    let response = execute(&resolved).await?;
-    println!(
-        "{} {} ({} ms)",
-        response.status,
-        resolved.url,
-        response.elapsed.as_millis()
-    );
-    for (k, v) in &response.headers {
-        println!("  {k}: {v}");
+    let report = ops::run_request(
+        &workspace,
+        args.reference,
+        args.env,
+        args.show_secrets,
+        if args.json { knock_core::report::DEFAULT_MAX_BODY } else { usize::MAX },
+    )
+    .await?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let resp = &report.response;
+        println!(
+            "{} {} {} ({} ms)",
+            resp.status, report.request.method, report.request.url, resp.elapsed_ms
+        );
+        for (k, v) in &resp.headers {
+            println!("  {k}: {v}");
+        }
+        println!();
+        println!("{}", pretty(&resp.body));
     }
-    println!();
-    println!("{}", response.body_string());
+    if args.fail && report.response.status >= 400 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn pretty(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => serde_json::to_string_pretty(other).unwrap_or_default(),
+    }
+}
+
+fn list(json: bool) -> Result<()> {
+    let workspace = discover()?;
+    let cat = knock_core::catalog::catalog(&workspace);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&cat)?);
+        return Ok(());
+    }
+    println!(
+        "env: {}  (available: {})",
+        cat.active_env.as_deref().unwrap_or("(none)"),
+        cat.environments.join(", ")
+    );
+    println!("\nrequests:");
+    for r in &cat.requests {
+        match &r.error {
+            Some(e) => println!("  {:<7} {}  ! {e}", "?", r.path),
+            None => println!(
+                "  {:<7} {}  {}{}",
+                r.method,
+                r.path,
+                r.url,
+                r.name.as_deref().map(|n| format!("  ({n})")).unwrap_or_default()
+            ),
+        }
+    }
+    if !cat.flows.is_empty() {
+        println!("\nflows:");
+        for f in &cat.flows {
+            println!("  {}  {} step(s)", f.path, f.steps);
+        }
+    }
+    Ok(())
+}
+
+fn curl_text(tokens: &[String]) -> Result<String> {
+    if tokens.len() == 1 && tokens[0] == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        return Ok(buf);
+    }
+    if tokens.len() == 1 {
+        return Ok(tokens[0].clone());
+    }
+    // Already split by the shell: re-quote so the parser sees the same tokens.
+    Ok(tokens
+        .iter()
+        .map(|t| format!("'{}'", t.replace('\'', "'\\''")))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+fn create_request(req: author::NewRequest, opts: author::CreateOptions, json: bool) -> Result<()> {
+    let workspace = discover()?;
+    let created = author::create(&workspace, req, &opts)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&created)?);
+        return Ok(());
+    }
+    println!("Created {}  ({} {})", created.path, created.method, created.url);
+    if !created.extracted_secrets.is_empty() {
+        println!(
+            "Moved {} to {} (gitignored) as {}",
+            if created.extracted_secrets.len() == 1 { "a credential" } else { "credentials" },
+            created.env_file.as_deref().unwrap_or("the local env"),
+            created
+                .extracted_secrets
+                .iter()
+                .map(|v| format!("{{{{{v}}}}}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    println!("Run it: knock run {}", created.path);
+    Ok(())
+}
+
+fn agents_init(force: bool) -> Result<()> {
+    let workspace = discover()?;
+    let docs = knock_core::agents::write_agent_docs(&workspace.root, force)?;
+    for f in &docs.written {
+        println!("wrote {f}");
+    }
+    for f in &docs.skipped {
+        println!("kept existing {f}{}", if f == "AGENTS.md" { " (use --force to refresh)" } else { "" });
+    }
+    println!("MCP: claude mcp add knock -- knock mcp");
     Ok(())
 }
 
 fn env_use(name: &str) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let workspace = Workspace::discover(&cwd)?;
-    workspace.set_active_env(name)?;
+    let workspace = discover()?;
+    ops::set_env(&workspace, name)?;
     println!("Active environment: {name}");
     Ok(())
 }

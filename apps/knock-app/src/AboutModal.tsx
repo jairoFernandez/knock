@@ -26,13 +26,13 @@ interface CacheShape {
   users: Stargazer[];
 }
 
-function loadCache(repo: string): Stargazer[] | null {
+function loadCache(repo: string, allowStale = false): Stargazer[] | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheShape;
     if (parsed.repo !== repo) return null;
-    if (Date.now() - parsed.fetched_at > CACHE_TTL_MS) return null;
+    if (!allowStale && Date.now() - parsed.fetched_at > CACHE_TTL_MS) return null;
     if (!Array.isArray(parsed.users) || parsed.users.length === 0) return null;
     return parsed.users;
   } catch {
@@ -50,6 +50,29 @@ function saveCache(repo: string, users: Stargazer[]): void {
   }
 }
 
+function describeGitHubError(resp: Response): string {
+  if (resp.status === 401) {
+    return "GitHub 401: the request carried invalid or expired credentials";
+  }
+  const remaining = resp.headers.get("x-ratelimit-remaining");
+  if (resp.status === 429 || (resp.status === 403 && remaining === "0")) {
+    const reset = Number(resp.headers.get("x-ratelimit-reset"));
+    const when = reset > 0 ? `; resets at ${new Date(reset * 1000).toLocaleTimeString()}` : "";
+    return `GitHub ${resp.status}: anonymous API rate limit reached (60 requests/hour per IP)${when}`;
+  }
+  return `GitHub ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`;
+}
+
+async function getGitHub(url: string): Promise<Response> {
+  const init: RequestInit = {
+    headers: { Accept: "application/vnd.github+json" },
+    credentials: "omit",
+  };
+  const resp = await fetch(url, init);
+  if (resp.status !== 401) return resp;
+  return fetch(url, { ...init, cache: "no-store" });
+}
+
 async function fetchStargazers(repo: string): Promise<Stargazer[]> {
   const out: Stargazer[] = [];
   let page = 1;
@@ -57,11 +80,9 @@ async function fetchStargazers(repo: string): Promise<Stargazer[]> {
   const maxPages = 5;
   while (page <= maxPages) {
     const url = `https://api.github.com/repos/${repo}/stargazers?per_page=${perPage}&page=${page}`;
-    const resp = await fetch(url, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
+    const resp = await getGitHub(url);
     if (!resp.ok) {
-      throw new Error(`GitHub ${resp.status} ${resp.statusText}`);
+      throw new Error(describeGitHubError(resp));
     }
     const data = (await resp.json()) as Stargazer[];
     if (!Array.isArray(data) || data.length === 0) break;
@@ -102,7 +123,11 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
         setUsers(u);
         saveCache(repo, u);
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => {
+        const stale = loadCache(repo, true);
+        if (stale) setUsers(stale);
+        else setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }, [tab, users, repo]);
 
@@ -184,8 +209,7 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
               {loading && <div className="dim">Loading stargazers…</div>}
               {error && (
                 <div className="dim">
-                  Could not load stargazers ({error}). GitHub anonymous API limits
-                  60 requests/hour per IP.
+                  Could not load stargazers ({error}).
                 </div>
               )}
               {users && users.length === 0 && !loading && (

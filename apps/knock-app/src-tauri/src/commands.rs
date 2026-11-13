@@ -1078,6 +1078,12 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
     if name.contains('/') || name.contains('\\') {
         return Err("workspace name cannot contain path separators".into());
     }
+    let parent = if parent.trim().is_empty() {
+        default_workspace_parent()?
+    } else {
+        expand_home(parent.trim())
+    };
+    std::fs::create_dir_all(&parent).map_err(to_err)?;
     let root = init_at(Path::new(&parent), &name, git).map_err(to_err)?;
     let workspace = Workspace::load(root).map_err(to_err)?;
     let root_str = workspace.root.display().to_string();
@@ -1091,6 +1097,27 @@ pub fn init_workspace(parent: String, name: String, git: bool) -> Result<Workspa
         color: workspace.config.color.clone(),
         icon: workspace.config.icon.clone(),
     })
+}
+
+/// Where new workspaces go when the user doesn't pick a folder:
+/// `<Documents>/Knock`. `dirs::document_dir` resolves the OS-specific folder
+/// (macOS `~/Documents`, Windows' Documents known folder — OneDrive-redirected
+/// included —, Linux `XDG_DOCUMENTS_DIR`); falls back to home when unset.
+#[tauri::command]
+pub fn default_workspace_parent() -> Result<String, String> {
+    let base = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "no documents or home dir".to_string())?;
+    Ok(base.join("Knock").display().to_string())
+}
+
+fn expand_home(p: &str) -> String {
+    match (p.strip_prefix('~'), dirs::home_dir()) {
+        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
+            format!("{}{rest}", home.display())
+        }
+        _ => p.to_string(),
+    }
 }
 
 #[tauri::command]
@@ -1739,15 +1766,7 @@ pub async fn run_request(
     Ok(dto)
 }
 
-const HISTORY_CAP: usize = 50;
-
-fn history_path(workspace: &Workspace, rel: &str) -> PathBuf {
-    let safe = rel.replace(['/', '\\'], "__");
-    workspace
-        .state_dir()
-        .join("history")
-        .join(format!("{safe}.jsonl"))
-}
+use knock_core::history::{history_path, HISTORY_CAP};
 
 fn append_history(workspace: &Workspace, rel: &str, dto: &ResponseDto) -> std::io::Result<()> {
     let path = history_path(workspace, rel);
