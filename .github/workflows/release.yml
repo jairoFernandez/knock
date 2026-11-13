@@ -248,3 +248,43 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }} ${{ matrix.os_name == 'macos' && '--verbose' || '' }}
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: [create-release, build-cli, build-app]
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip when the tap token is not configured
+        if: env.TAP_TOKEN == ''
+        run: echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew tap update"
+
+      - uses: actions/checkout@v4
+        if: env.TAP_TOKEN != ''
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-knock
+          token: ${{ env.TAP_TOKEN }}
+          path: tap
+
+      - name: Write formula and cask
+        if: env.TAP_TOKEN != ''
+        env:
+          KNOCK_REPO: ${{ github.repository }}
+        run: ./scripts/homebrew.sh "${{ needs.create-release.outputs.tag }}" tap
+
+      - name: Push to tap
+        if: env.TAP_TOKEN != ''
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula Casks
+          if git diff --cached --quiet; then
+            echo "tap already up to date"
+            exit 0
+          fi
+          git commit -m "knock ${{ needs.create-release.outputs.tag }}"
+          git push

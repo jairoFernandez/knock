@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { TemplatedInput } from "./TemplatedInput";
 import { KVTable } from "./KVTable";
+import { HEADER_HINTS } from "./headerHints";
 import { BodyTab } from "./BodyTab";
 import { hasUnresolvedVars, interpolate } from "./interpolate";
 import type { KV, OpenApiParamSpec, RequestForm } from "./types";
@@ -94,6 +95,7 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
             vars={vars}
             placeholder="https://api.example.com/users  (or {{base_url}}/users)"
             monospace
+            autoFocus={form.url === ""}
           />
         </div>
         <button className="send" disabled={running} onClick={onSend}>
@@ -213,6 +215,7 @@ export function RequestEditor({ form, vars, running, onChange, onSend }: Props) 
               rows={form.headers}
               vars={effectiveVars}
               keyPlaceholder="header"
+              hints={HEADER_HINTS}
               onChange={(headers) => onChange({ ...form, headers })}
             />
           )

@@ -7,6 +7,8 @@ interface Props {
   placeholder?: string;
   className?: string;
   monospace?: boolean;
+  autoFocus?: boolean;
+  list?: string;
 }
 
 const VAR_RE = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
@@ -42,6 +44,8 @@ export function TemplatedInput({
   placeholder,
   className,
   monospace,
+  autoFocus,
+  list,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -57,6 +61,10 @@ export function TemplatedInput({
     input.addEventListener("scroll", onScroll);
     return () => input.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus();
+  }, [autoFocus]);
 
   useEffect(() => {
     if (overlayRef.current && inputRef.current) {
@@ -89,6 +97,7 @@ export function TemplatedInput({
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 120)}
         placeholder={placeholder}
+        list={list}
         spellCheck={false}
         autoCorrect="off"
         autoCapitalize="off"

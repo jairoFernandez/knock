@@ -1,40 +1,132 @@
-import { useState } from "react";
-import { CopyButton, HistoryList, randomBytes, useHistory, usePersistedField } from "./shared";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { CopyButton, HistoryList, useHistory, usePersistedField } from "./shared";
 
-type Kind = "name" | "email" | "address" | "phone" | "uuid" | "lorem" | "ipv4" | "company";
+type Kind =
+  | "name"
+  | "email"
+  | "address"
+  | "phone"
+  | "uuid"
+  | "lorem"
+  | "ipv4"
+  | "company"
+  | "user"
+  | "template";
 
-const FIRST = ["Alex", "Jordan", "Sam", "Taylor", "Casey", "Morgan", "Riley", "Quinn", "Avery", "Drew", "Jamie", "Skyler"];
-const LAST = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Lopez", "Wilson", "Anderson", "Taylor"];
-const STREETS = ["Main", "Oak", "Pine", "Maple", "Cedar", "Elm", "Birch", "Walnut", "Sunset", "Park"];
-const CITIES = ["Springfield", "Riverside", "Madison", "Georgetown", "Franklin", "Clinton", "Greenville", "Bristol"];
-const COMPANIES = ["Acme", "Globex", "Initech", "Umbrella", "Vandelay", "Stark", "Wayne", "Hooli", "Pied Piper", "Wonka"];
-const SUFFIX = ["Inc", "LLC", "Corp", "Group", "Labs", "Co"];
+const KINDS: Kind[] = ["name", "email", "address", "phone", "uuid", "lorem", "ipv4", "company", "user", "template"];
 
-const LOREM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.`;
+// Same token engine the mock server uses, so what you see here is what endpoints return.
+const TEMPLATES: Record<Exclude<Kind, "template">, string> = {
+  name: "{{name.full}}",
+  email: "{{internet.free_email}}",
+  address: "{{address.street}}, {{address.city}} {{address.zip}}, {{address.country}}",
+  phone: "{{phone}}",
+  uuid: "{{uuid}}",
+  lorem: "{{lorem.sentence}}",
+  ipv4: "{{internet.ipv4}}",
+  company: "{{company.name}}",
+  user: '{\n  "id": "{{uuid}}",\n  "name": "{{name.full}}",\n  "email": "{{internet.email}}",\n  "username": "{{internet.username}}",\n  "password": "{{string.password(16)}}",\n  "createdAt": "{{date.past(90)}}"\n}',
+};
+
+const DEFAULT_TEMPLATE = '{\n  "id": "{{uuid}}",\n  "sku": "SKU-{{string.upper(3)}}-{{string.numeric(4)}}",\n  "price": "{{number.float(1..100)}}",\n  "inStock": "{{bool}}"\n}';
+
+interface MockToken {
+  token: string;
+  description: string;
+  group: string;
+  snippet: string | null;
+}
 
 export function MockDataTool() {
   const [kind, setKind] = usePersistedField<Kind>("knock.tools.mock.kind", "name");
   const [count, setCount] = usePersistedField<number>("knock.tools.mock.count", 5);
+  const [template, setTemplate] = usePersistedField<string>("knock.tools.mock.template", DEFAULT_TEMPLATE);
   const [output, setOutput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<MockToken[]>([]);
+  const templateRef = useRef<HTMLTextAreaElement | null>(null);
   const history = useHistory("knock.tools.mock.history");
 
-  function gen() {
-    const arr: string[] = [];
-    for (let i = 0; i < count; i++) arr.push(genOne(kind));
-    const v = arr.join("\n");
-    setOutput(v);
-    history.push(kind, v);
+  useEffect(() => {
+    invoke<MockToken[]>("mock_token_catalog")
+      // Request tokens only make sense inside a live mock endpoint.
+      .then((all) => setTokens(all.filter((t) => t.group !== "Request")))
+      .catch(() => setTokens([]));
+  }, []);
+
+  async function gen() {
+    setError(null);
+    try {
+      const tpl = kind === "template" ? template : TEMPLATES[kind];
+      const v = await invoke<string>("mock_render_template", { template: tpl, count });
+      setOutput(v);
+      history.push(kind, v);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  function insert(t: MockToken) {
+    const el = templateRef.current;
+    const start = el?.selectionStart ?? template.length;
+    const end = el?.selectionEnd ?? template.length;
+    const text = t.snippet ?? t.token;
+    setTemplate(template.slice(0, start) + text + template.slice(end));
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + text.length, start + text.length);
+    });
   }
 
   return (
     <>
       <div className="tools-tabs tools-tabs-wrap">
-        {(["name", "email", "address", "phone", "uuid", "lorem", "ipv4", "company"] as Kind[]).map((k) => (
+        {KINDS.map((k) => (
           <button key={k} className={kind === k ? "active" : ""} onClick={() => setKind(k)}>
             {k}
           </button>
         ))}
       </div>
+      {kind === "template" && (
+        <>
+          <div className="tools-row">
+            <label className="tools-label" style={{ flex: 1 }}>
+              Template — JSON gives an array, plain text one line per item
+            </label>
+            <select
+              className="tools-input"
+              value=""
+              onChange={(e) => {
+                const t = tokens.find((x) => x.token === e.target.value);
+                if (t) insert(t);
+              }}
+            >
+              <option value="">Insert token…</option>
+              {Array.from(new Set(tokens.map((t) => t.group))).map((g) => (
+                <optgroup key={g} label={g}>
+                  {tokens
+                    .filter((t) => t.group === g)
+                    .map((t) => (
+                      <option key={t.token} value={t.token}>
+                        {t.token} — {t.description}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <textarea
+            ref={templateRef}
+            className="tools-textarea"
+            value={template}
+            onChange={(e) => setTemplate(e.target.value)}
+            spellCheck={false}
+            rows={8}
+          />
+        </>
+      )}
       <div className="tools-row">
         <label className="tools-label" style={{ flex: 1 }}>
           Count
@@ -51,6 +143,7 @@ export function MockDataTool() {
       <button className="tools-generate" onClick={gen}>
         Generate
       </button>
+      {error && <div className="tools-error">{error}</div>}
       <div className="tools-output-header">
         <span>Output</span>
         <CopyButton text={output} />
@@ -64,41 +157,4 @@ export function MockDataTool() {
       <HistoryList history={history} onPick={setOutput} />
     </>
   );
-}
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function genOne(kind: Kind): string {
-  if (kind === "name") return `${pick(FIRST)} ${pick(LAST)}`;
-  if (kind === "email") {
-    const first = pick(FIRST).toLowerCase();
-    const last = pick(LAST).toLowerCase();
-    const domain = pick(["example.com", "test.org", "mail.net", "demo.io"]);
-    return `${first}.${last}${Math.floor(Math.random() * 99)}@${domain}`;
-  }
-  if (kind === "address") {
-    return `${Math.floor(Math.random() * 9999) + 1} ${pick(STREETS)} St, ${pick(CITIES)}`;
-  }
-  if (kind === "phone") {
-    const n = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-    return `+1 (${n(200, 999)}) ${n(200, 999)}-${n(1000, 9999)}`;
-  }
-  if (kind === "uuid") {
-    if ("randomUUID" in crypto) return crypto.randomUUID();
-    const b = randomBytes(16);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    const hex = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  }
-  if (kind === "ipv4") {
-    return [1, 2, 3, 4].map(() => Math.floor(Math.random() * 256)).join(".");
-  }
-  if (kind === "company") return `${pick(COMPANIES)} ${pick(SUFFIX)}`;
-  // lorem
-  const words = LOREM.split(/\s+/);
-  const len = 8 + Math.floor(Math.random() * 25);
-  return words.slice(0, len).join(" ");
 }

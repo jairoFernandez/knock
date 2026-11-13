@@ -1,14 +1,14 @@
 use crate::auth::{self, AuthRequest, AuthScheme, JwtIssuer};
 use crate::faker;
 use crate::spec::{MockSpec, ResponseBody, ResponseTemplate, Route};
-use crate::tokens;
+use crate::tokens::{self, RequestCtx};
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
-use axum::Router;
+use axum::{RequestPartsExt, Router};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::collections::BTreeMap;
@@ -53,6 +53,8 @@ pub enum ServeError {
     InvalidMethod(String),
     #[error("invalid header: {0}")]
     InvalidHeader(String),
+    #[error("duplicate route: {0} {1} is defined more than once")]
+    DuplicateRoute(String, String),
     #[error("invalid response status: {0}")]
     InvalidStatus(u16),
     #[error("server io: {0}")]
@@ -210,8 +212,14 @@ pub fn build_router(spec: MockSpec) -> Result<Router, ServeError> {
 
     for (path, routes) in by_path {
         let mut method_router: MethodRouter<Arc<AppState>> = any(method_not_allowed);
+        let mut seen: Vec<Method> = Vec::new();
         for route in routes {
             let method = parse_method(&route.method)?;
+            // axum panics on overlapping method routes; surface it as an error.
+            if seen.contains(&method) {
+                return Err(ServeError::DuplicateRoute(method.to_string(), path));
+            }
+            seen.push(method.clone());
             validate_response(&route.response)?;
             let route_arc = Arc::new(route);
             method_router = method_router.on(
@@ -309,36 +317,79 @@ async fn handle(
         }
     }
 
+    let ctx = request_ctx(req).await;
+
     // Delay
     let delay = route.response.delay_ms.or(state.spec.default_delay_ms);
     if let Some(ms) = delay {
         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     }
 
-    render_response(&route.response, &state.spec.global_headers)
+    render_response(&route.response, &state.spec.global_headers, &ctx)
 }
 
-fn render_response(t: &ResponseTemplate, global: &BTreeMap<String, String>) -> Response {
-    let mut builder = Response::builder().status(t.status);
-    for (k, v) in global {
-        builder = builder.header(k, v);
+const MAX_CTX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+async fn request_ctx(req: Request<Body>) -> RequestCtx {
+    let (mut parts, body) = req.into_parts();
+    let params = parts
+        .extract::<Path<BTreeMap<String, String>>>()
+        .await
+        .map(|p| p.0)
+        .unwrap_or_default();
+    let query = parts
+        .extract::<Query<BTreeMap<String, String>>>()
+        .await
+        .map(|q| q.0)
+        .unwrap_or_default();
+    let headers = parts
+        .headers
+        .iter()
+        .filter_map(|(k, v)| {
+            Some((
+                k.as_str().to_ascii_lowercase(),
+                v.to_str().ok()?.to_string(),
+            ))
+        })
+        .collect();
+    let body = match axum::body::to_bytes(body, MAX_CTX_BODY_BYTES).await {
+        Ok(b) if !b.is_empty() => Some(serde_json::from_slice(&b).unwrap_or_else(|_| {
+            serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
+        })),
+        _ => None,
+    };
+    RequestCtx {
+        method: parts.method.to_string(),
+        path: parts.uri.path().to_string(),
+        params,
+        query,
+        headers,
+        body,
     }
-    for (k, v) in &t.headers {
-        builder = builder.header(k, v);
+}
+
+fn render_response(
+    t: &ResponseTemplate,
+    global: &BTreeMap<String, String>,
+    ctx: &RequestCtx,
+) -> Response {
+    let mut rng = StdRng::from_entropy();
+    let mut builder = Response::builder().status(t.status);
+    for (k, v) in global.iter().chain(&t.headers) {
+        builder = builder.header(k, tokens::interpolate_str_ctx(v, &mut rng, Some(ctx)));
     }
 
-    let mut rng = StdRng::from_entropy();
     let (ct_default, body): (Option<&str>, Body) = match &t.body {
         ResponseBody::Empty => (None, Body::empty()),
         ResponseBody::Text { text } => {
-            let mut s = tokens::interpolate_str(text, &mut rng);
+            let mut s = tokens::interpolate_str_ctx(text, &mut rng, Some(ctx));
             if !s.ends_with('\n') {
                 s.push('\n');
             }
             (Some("text/plain; charset=utf-8"), Body::from(s))
         }
         ResponseBody::Json { json } => {
-            let interpolated = tokens::interpolate_value(json, &mut rng);
+            let interpolated = tokens::interpolate_value_ctx(json, &mut rng, Some(ctx));
             let mut bytes = serde_json::to_vec(&interpolated).unwrap_or_default();
             bytes.push(b'\n');
             (Some("application/json"), Body::from(bytes))

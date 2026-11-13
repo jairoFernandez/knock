@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AboutModal } from "./AboutModal";
+import { AgentsModal } from "./AgentsModal";
 
 interface Props {
   workspaceRoot?: string | null;
@@ -228,6 +229,7 @@ export function Statusbar({
   const [meta, setMeta] = useState<RepoMeta>({ stars: null });
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [showAbout, setShowAbout] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -338,6 +340,13 @@ export function Statusbar({
           </span>
         )}
         <button
+          className="statusbar-item link agents-entry"
+          onClick={() => setShowAgents(true)}
+          title="Use Knock from Claude Code, Codex or Cursor"
+        >
+          ✦ Agents
+        </button>
+        <button
           className="statusbar-item link"
           onClick={openAbout}
           title="About Knock + stargazers"
@@ -356,6 +365,12 @@ export function Statusbar({
         </button>
         <span className="statusbar-item dim">Made with ♥</span>
       </div>
+      {showAgents && (
+        <AgentsModal
+          workspaceRoot={workspaceRoot ?? null}
+          onClose={() => setShowAgents(false)}
+        />
+      )}
       {showAbout && (
         <AboutModal
           repo={REPO}

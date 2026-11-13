@@ -1,3 +1,4 @@
+mod agents_cmd;
 pub mod commands;
 mod kubeconfig_cmd;
 mod mock_cmd;
@@ -33,7 +34,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agents_cmd::agents_status,
+            agents_cmd::agents_register_claude,
+            agents_cmd::agents_write_docs,
             commands::init_workspace,
+            commands::default_workspace_parent,
             commands::init_example_workspace,
             commands::open_workspace,
             commands::list_tree,
@@ -117,6 +122,10 @@ pub fn run() {
             mock_cmd::mock_read_response,
             mock_cmd::mock_save_response,
             mock_cmd::mock_clear_response,
+            mock_cmd::mock_token_catalog,
+            mock_cmd::mock_render_preview,
+            mock_cmd::mock_render_template,
+            mock_cmd::mock_create_endpoint,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

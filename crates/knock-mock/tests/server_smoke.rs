@@ -156,3 +156,57 @@ async fn schema_body_renders_json() {
     assert!(v.get("name").unwrap().is_string());
     handle.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn echoes_request_data_and_repeats() {
+    let mut r = route(
+        "POST",
+        "/users/:id",
+        201,
+        ResponseBody::Json {
+            json: serde_json::json!({
+                "id": "{{params.id}}",
+                "page": "{{query.page|1}}",
+                "email": "{{body.email}}",
+                "agent": "{{header.x-client}}",
+                "items": ["{{repeat(2)}}", {"n": "{{index}}"}]
+            }),
+        },
+    );
+    r.response
+        .headers
+        .insert("location".into(), "/users/{{params.id}}".into());
+    let (base, handle) = boot(MockSpec::builder().route(r).build()).await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/users/42?page=3"))
+        .header("X-Client", "tests")
+        .json(&serde_json::json!({"email": "a@b.c"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    assert_eq!(resp.headers()["location"], "/users/42");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "id": "42", "page": "3", "email": "a@b.c", "agent": "tests",
+            "items": [{"n": 1}, {"n": 2}]
+        })
+    );
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn duplicate_route_is_an_error_not_a_panic() {
+    let body = || ResponseBody::Empty;
+    let spec = MockSpec::builder()
+        .route(route("GET", "/a", 200, body()))
+        .route(route("GET", "/a", 200, body()))
+        .build();
+    let err = serve(spec, "127.0.0.1:0".parse().unwrap())
+        .await
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("duplicate route"), "{err}");
+}

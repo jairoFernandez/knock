@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
@@ -24,13 +24,25 @@ const PALETTE = [
   "#9b9ea8",
 ];
 
+const LAST_PARENT_KEY = "knock.newWorkspace.lastParent";
+
+function readLastParent(): string {
+  try {
+    return localStorage.getItem(LAST_PARENT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 const ICONS = [
   "★", "◆", "●", "▲", "■", "♠", "♣", "♥", "♦", "✦",
   "✧", "⚡", "⚙", "⌂", "☕", "🔥", "🚀", "🐍", "🦀", "🍃",
 ];
 
 export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
-  const [parent, setParent] = useState<string>("");
+  const [parent, setParent] = useState<string>(readLastParent);
+  const [defaultParent, setDefaultParent] = useState<string>("");
+  const [editingParent, setEditingParent] = useState(false);
   const [name, setName] = useState<string>("");
   const [git, setGit] = useState<boolean>(true);
   const [color, setColor] = useState<string>("");
@@ -42,8 +54,24 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
 
+  useEffect(() => {
+    invoke<string>("default_workspace_parent")
+      .then(setDefaultParent)
+      .catch(() => setDefaultParent(""));
+  }, []);
+
+  const effectiveParent = parent.trim() || defaultParent;
+  const sep = effectiveParent.includes("\\") && !effectiveParent.includes("/") ? "\\" : "/";
+  const location = effectiveParent
+    ? `${effectiveParent.replace(/[\\/]+$/, "")}${sep}${name.trim() || "…"}`
+    : "";
+
   async function pickParent() {
-    const picked = await open({ directory: true, multiple: false });
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: effectiveParent || undefined,
+    });
     if (picked && typeof picked === "string") setParent(picked);
   }
 
@@ -60,7 +88,6 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
 
   async function create() {
     setError(null);
-    if (!parent) return setError("Choose a parent directory.");
     if (!name.trim()) return setError("Enter a workspace name.");
     const source: OpenApiSource | null =
       openapiTab === "url" && openapiUrl.trim()
@@ -73,10 +100,15 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
     try {
       setProgress("Creating workspace…");
       let info = await invoke<WorkspaceInfo>("init_workspace", {
-        parent,
+        parent: parent.trim(),
         name: name.trim(),
         git,
       });
+      try {
+        if (parent.trim()) localStorage.setItem(LAST_PARENT_KEY, parent.trim());
+      } catch {
+        // storage unavailable: just won't remember the folder
+      }
 
       const finalColor = color.trim() || null;
       const finalIcon = icon.trim() || null;
@@ -139,18 +171,6 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>New workspace</h2>
         <label>
-          Parent directory
-          <div className="row">
-            <input
-              type="text"
-              value={parent}
-              onChange={(e) => setParent(e.target.value)}
-              placeholder="/path/to/parent"
-            />
-            <button onClick={pickParent}>Browse…</button>
-          </div>
-        </label>
-        <label>
           Workspace name
           <input
             type="text"
@@ -163,6 +183,32 @@ export function NewWorkspaceModal({ onCreated, onCancel }: Props) {
             }}
           />
         </label>
+        {editingParent ? (
+          <label>
+            Parent directory
+            <div className="row">
+              <input
+                type="text"
+                value={parent}
+                onChange={(e) => setParent(e.target.value)}
+                placeholder={defaultParent || "/path/to/parent"}
+              />
+              <button onClick={pickParent}>Browse…</button>
+              {parent && (
+                <button onClick={() => setParent("")} title="Use the default folder">
+                  Default
+                </button>
+              )}
+            </div>
+          </label>
+        ) : (
+          <div className="modal-location">
+            <span>
+              Location: <code>{location}</code>
+            </span>
+            <button onClick={() => setEditingParent(true)}>Change…</button>
+          </div>
+        )}
         <label className="checkbox">
           <input
             type="checkbox"
