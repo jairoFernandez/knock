@@ -14,16 +14,63 @@ pub enum CurlError {
 }
 
 const FLAGS_WITHOUT_VALUE: &[&str] = &[
-    "-s", "--silent", "-S", "--show-error", "-L", "--location", "-k", "--insecure", "-i",
-    "--include", "-v", "--verbose", "--compressed", "-f", "--fail", "--fail-with-body",
-    "--http1.1", "--http2", "--http2-prior-knowledge", "-g", "--globoff", "-N", "--no-buffer",
-    "-#", "--progress-bar", "-O", "--remote-name", "-J", "--remote-header-name", "-I", "--head",
+    "-s",
+    "--silent",
+    "-S",
+    "--show-error",
+    "-L",
+    "--location",
+    "-k",
+    "--insecure",
+    "-i",
+    "--include",
+    "-v",
+    "--verbose",
+    "--compressed",
+    "-f",
+    "--fail",
+    "--fail-with-body",
+    "--http1.1",
+    "--http2",
+    "--http2-prior-knowledge",
+    "-g",
+    "--globoff",
+    "-N",
+    "--no-buffer",
+    "-#",
+    "--progress-bar",
+    "-O",
+    "--remote-name",
+    "-J",
+    "--remote-header-name",
+    "-I",
+    "--head",
 ];
 
 const FLAGS_WITH_VALUE: &[&str] = &[
-    "-o", "--output", "-m", "--max-time", "--connect-timeout", "--retry", "-w", "--write-out",
-    "-x", "--proxy", "--cacert", "--cert", "-E", "--key", "-r", "--range", "--resolve",
-    "--max-redirs", "-c", "--cookie-jar", "--limit-rate", "-K", "--config",
+    "-o",
+    "--output",
+    "-m",
+    "--max-time",
+    "--connect-timeout",
+    "--retry",
+    "-w",
+    "--write-out",
+    "-x",
+    "--proxy",
+    "--cacert",
+    "--cert",
+    "-E",
+    "--key",
+    "-r",
+    "--range",
+    "--resolve",
+    "--max-redirs",
+    "-c",
+    "--cookie-jar",
+    "--limit-rate",
+    "-K",
+    "--config",
 ];
 
 pub fn parse(command: &str) -> Result<NewRequest, CurlError> {
@@ -48,7 +95,8 @@ pub fn parse(command: &str) -> Result<NewRequest, CurlError> {
             if let Some(v) = attached.clone() {
                 return Ok(v);
             }
-            iter.next().ok_or_else(|| CurlError::MissingValue(name.to_string()))
+            iter.next()
+                .ok_or_else(|| CurlError::MissingValue(name.to_string()))
         };
         match flag.as_str() {
             "-X" | "--request" => method = Some(value(&flag)?.to_uppercase()),
@@ -58,9 +106,8 @@ pub fn parse(command: &str) -> Result<NewRequest, CurlError> {
                     headers.insert(k.trim().to_string(), v.trim().to_string());
                 }
             }
-            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-ascii" | "--data-urlencode" => {
-                data.push(value(&flag)?)
-            }
+            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-ascii"
+            | "--data-urlencode" => data.push(value(&flag)?),
             "--json" => {
                 data.push(value(&flag)?);
                 json_flag = true;
@@ -175,7 +222,10 @@ fn split_flag(tok: &str) -> (String, Option<String>) {
     // -XPOST, -H'Accept: x', -dfoo
     if tok.len() > 2 && tok.starts_with('-') && !tok.starts_with("--") {
         let flag = &tok[..2];
-        if matches!(flag, "-X" | "-H" | "-d" | "-u" | "-A" | "-b" | "-e" | "-F" | "-o" | "-m" | "-w" | "-x") {
+        if matches!(
+            flag,
+            "-X" | "-H" | "-d" | "-u" | "-A" | "-b" | "-e" | "-F" | "-o" | "-m" | "-w" | "-x"
+        ) {
             return (flag.to_string(), Some(tok[2..].to_string()));
         }
     }
@@ -354,7 +404,10 @@ mod tests {
 
     #[test]
     fn errors() {
-        assert_eq!(parse("curl -H 'x").unwrap_err(), CurlError::UnterminatedQuote);
+        assert_eq!(
+            parse("curl -H 'x").unwrap_err(),
+            CurlError::UnterminatedQuote
+        );
         assert_eq!(parse("curl -s").unwrap_err(), CurlError::NoUrl);
     }
 }

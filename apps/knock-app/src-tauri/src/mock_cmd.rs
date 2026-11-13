@@ -325,7 +325,13 @@ fn normalize_endpoint_path(p: &str) -> Result<String, String> {
 fn default_endpoint_rel(method: &str, path: &str) -> String {
     let slug: String = path
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
@@ -564,7 +570,10 @@ mod tests {
 
     #[test]
     fn endpoint_rel_from_path() {
-        assert_eq!(default_endpoint_rel("GET", "/users/{id}/posts"), "mock/users-id-posts-get");
+        assert_eq!(
+            default_endpoint_rel("GET", "/users/{id}/posts"),
+            "mock/users-id-posts-get"
+        );
         assert_eq!(default_endpoint_rel("POST", "/"), "mock/root-post");
     }
 
@@ -606,8 +615,13 @@ mod tests {
         assert_eq!(read.edit.body_text.as_deref(), Some("teapot"));
 
         mock_clear_response(root.clone(), "a.toml".into()).unwrap();
-        assert_eq!(mock_read_response(root, "a.toml".into()).unwrap().origin, "none");
-        assert!(std::fs::read_to_string(&req).unwrap().contains("url = \"/a\""));
+        assert_eq!(
+            mock_read_response(root, "a.toml".into()).unwrap().origin,
+            "none"
+        );
+        assert!(std::fs::read_to_string(&req)
+            .unwrap()
+            .contains("url = \"/a\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -634,17 +648,27 @@ mod tests {
             ..Default::default()
         };
 
-        let rel = mock_create_endpoint(root.clone(), "post".into(), "/login".into(), None, edit).unwrap();
+        let rel =
+            mock_create_endpoint(root.clone(), "post".into(), "/login".into(), None, edit).unwrap();
         assert_eq!(rel, "mock/login-post.toml");
 
         let preview = mock_preview(root.clone()).unwrap();
         let r = preview.routes.iter().find(|r| r.path == "/login").unwrap();
-        assert_eq!((r.method.as_str(), r.status, r.source.as_str()), ("POST", 201, "sibling"));
+        assert_eq!(
+            (r.method.as_str(), r.status, r.source.as_str()),
+            ("POST", 201, "sibling")
+        );
 
         let dup = MockResponseEdit::default();
-        assert!(mock_create_endpoint(root, "POST".into(), "login".into(), Some("other".into()), dup)
-            .unwrap_err()
-            .contains("already exists"));
+        assert!(mock_create_endpoint(
+            root,
+            "POST".into(),
+            "login".into(),
+            Some("other".into()),
+            dup
+        )
+        .unwrap_err()
+        .contains("already exists"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

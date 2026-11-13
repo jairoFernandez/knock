@@ -204,6 +204,9 @@ async fn duplicate_route_is_an_error_not_a_panic() {
         .route(route("GET", "/a", 200, body()))
         .route(route("GET", "/a", 200, body()))
         .build();
-    let err = serve(spec, "127.0.0.1:0".parse().unwrap()).await.err().unwrap();
+    let err = serve(spec, "127.0.0.1:0".parse().unwrap())
+        .await
+        .err()
+        .unwrap();
     assert!(err.to_string().contains("duplicate route"), "{err}");
 }

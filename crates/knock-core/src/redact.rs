@@ -88,7 +88,10 @@ impl Redactor {
             .environment_path(name)
             .map(|p| p.to_string_lossy().ends_with(".local.toml"))
             .unwrap_or(false);
-        let shared_path = workspace.root.join("environments").join(format!("{name}.toml"));
+        let shared_path = workspace
+            .root
+            .join("environments")
+            .join(format!("{name}.toml"));
         let shared = if from_local && shared_path.is_file() {
             parser::parse_environment(&shared_path)?.vars
         } else {
@@ -250,7 +253,14 @@ mod tests {
 
     #[test]
     fn sensitive_names() {
-        for n in ["access_token", "Authorization", "x-auth-token", "clientSecret", "PASSWORD", "api_key"] {
+        for n in [
+            "access_token",
+            "Authorization",
+            "x-auth-token",
+            "clientSecret",
+            "PASSWORD",
+            "api_key",
+        ] {
             assert!(is_sensitive_name(n), "{n}");
         }
         for n in ["author", "author_id", "name", "keyboard", "id"] {

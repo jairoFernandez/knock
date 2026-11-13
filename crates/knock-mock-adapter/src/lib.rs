@@ -242,7 +242,10 @@ fn resolve_response(
     Ok((status, ResponseBody::Json { json: stub }, BodySource::Stub))
 }
 
-fn body_from_mock(b: &MockBody, headers: &indexmap::IndexMap<String, String>) -> Result<ResponseBody> {
+fn body_from_mock(
+    b: &MockBody,
+    headers: &indexmap::IndexMap<String, String>,
+) -> Result<ResponseBody> {
     if let Some(t) = &b.text {
         // The app stores JSON bodies as compact text; serve them as JSON so
         // typed tokens (`{{number.int}}`, `{{body}}`) and `repeat` work.
@@ -250,7 +253,7 @@ fn body_from_mock(b: &MockBody, headers: &indexmap::IndexMap<String, String>) ->
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
             .map(|(_, v)| v.to_ascii_lowercase());
-        if ct.as_deref().map_or(true, |c| c.contains("json")) {
+        if ct.as_deref().is_none_or(|c| c.contains("json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
                 if v.is_object() || v.is_array() {
                     return Ok(ResponseBody::Json { json: v });
@@ -400,14 +403,23 @@ mod tests {
             ..Default::default()
         };
         let mut h = indexmap::IndexMap::new();
-        assert!(matches!(body_from_mock(&body, &h).unwrap(), ResponseBody::Json { .. }));
+        assert!(matches!(
+            body_from_mock(&body, &h).unwrap(),
+            ResponseBody::Json { .. }
+        ));
         h.insert("Content-Type".into(), "text/plain".into());
-        assert!(matches!(body_from_mock(&body, &h).unwrap(), ResponseBody::Text { .. }));
+        assert!(matches!(
+            body_from_mock(&body, &h).unwrap(),
+            ResponseBody::Text { .. }
+        ));
         let plain = MockBody {
             text: Some("hello".into()),
             ..Default::default()
         };
-        assert!(matches!(body_from_mock(&plain, &indexmap::IndexMap::new()).unwrap(), ResponseBody::Text { .. }));
+        assert!(matches!(
+            body_from_mock(&plain, &indexmap::IndexMap::new()).unwrap(),
+            ResponseBody::Text { .. }
+        ));
     }
 
     #[test]

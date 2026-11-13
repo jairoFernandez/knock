@@ -345,13 +345,17 @@ async fn request_ctx(req: Request<Body>) -> RequestCtx {
     let headers = parts
         .headers
         .iter()
-        .filter_map(|(k, v)| Some((k.as_str().to_ascii_lowercase(), v.to_str().ok()?.to_string())))
+        .filter_map(|(k, v)| {
+            Some((
+                k.as_str().to_ascii_lowercase(),
+                v.to_str().ok()?.to_string(),
+            ))
+        })
         .collect();
     let body = match axum::body::to_bytes(body, MAX_CTX_BODY_BYTES).await {
-        Ok(b) if !b.is_empty() => Some(
-            serde_json::from_slice(&b)
-                .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())),
-        ),
+        Ok(b) if !b.is_empty() => Some(serde_json::from_slice(&b).unwrap_or_else(|_| {
+            serde_json::Value::String(String::from_utf8_lossy(&b).into_owned())
+        })),
         _ => None,
     };
     RequestCtx {

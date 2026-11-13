@@ -330,7 +330,8 @@ async fn main() -> Result<()> {
                 let (k, v) = h
                     .split_once(':')
                     .ok_or_else(|| anyhow!("header must look like 'Name: value', got '{h}'"))?;
-                req.headers.insert(k.trim().to_string(), v.trim().to_string());
+                req.headers
+                    .insert(k.trim().to_string(), v.trim().to_string());
             }
             if let Some((base, q)) = req.url.clone().split_once('?') {
                 req.url = base.to_string();
@@ -838,7 +839,8 @@ fn init(name: &str, no_git: bool) -> Result<()> {
 
 fn discover() -> Result<Workspace> {
     let cwd = std::env::current_dir()?;
-    Workspace::discover(&cwd).with_context(|| format!("no knock workspace found from {}", cwd.display()))
+    Workspace::discover(&cwd)
+        .with_context(|| format!("no knock workspace found from {}", cwd.display()))
 }
 
 struct RunArgs<'a> {
@@ -878,7 +880,11 @@ async fn run(args: RunArgs<'_>) -> Result<()> {
         args.reference,
         args.env,
         args.show_secrets,
-        if args.json { knock_core::report::DEFAULT_MAX_BODY } else { usize::MAX },
+        if args.json {
+            knock_core::report::DEFAULT_MAX_BODY
+        } else {
+            usize::MAX
+        },
     )
     .await?;
 
@@ -931,7 +937,10 @@ fn list(json: bool) -> Result<()> {
                 r.method,
                 r.path,
                 r.url,
-                r.name.as_deref().map(|n| format!("  ({n})")).unwrap_or_default()
+                r.name
+                    .as_deref()
+                    .map(|n| format!("  ({n})"))
+                    .unwrap_or_default()
             ),
         }
     }
@@ -968,11 +977,18 @@ fn create_request(req: author::NewRequest, opts: author::CreateOptions, json: bo
         println!("{}", serde_json::to_string_pretty(&created)?);
         return Ok(());
     }
-    println!("Created {}  ({} {})", created.path, created.method, created.url);
+    println!(
+        "Created {}  ({} {})",
+        created.path, created.method, created.url
+    );
     if !created.extracted_secrets.is_empty() {
         println!(
             "Moved {} to {} (gitignored) as {}",
-            if created.extracted_secrets.len() == 1 { "a credential" } else { "credentials" },
+            if created.extracted_secrets.len() == 1 {
+                "a credential"
+            } else {
+                "credentials"
+            },
             created.env_file.as_deref().unwrap_or("the local env"),
             created
                 .extracted_secrets
@@ -993,7 +1009,14 @@ fn agents_init(force: bool) -> Result<()> {
         println!("wrote {f}");
     }
     for f in &docs.skipped {
-        println!("kept existing {f}{}", if f == "AGENTS.md" { " (use --force to refresh)" } else { "" });
+        println!(
+            "kept existing {f}{}",
+            if f == "AGENTS.md" {
+                " (use --force to refresh)"
+            } else {
+                ""
+            }
+        );
     }
     println!("MCP: claude mcp add knock -- knock mcp");
     Ok(())

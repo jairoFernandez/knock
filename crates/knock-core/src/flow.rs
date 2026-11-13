@@ -1,8 +1,8 @@
+use crate::history;
 use crate::model::{Expect, Flow, Response};
 use crate::parser::ParseError;
 use crate::resolver::{self, ResolveError};
 use crate::runner::{self, RunError};
-use crate::history;
 use crate::workspace::Workspace;
 use indexmap::IndexMap;
 use std::path::Path;
@@ -75,7 +75,10 @@ pub async fn run_flow(
             .clone()
             .unwrap_or_else(|| format!("step-{}", idx + 1));
 
-        if outcomes.iter().any(|o: &StepOutcome| !o.failures.is_empty()) {
+        if outcomes
+            .iter()
+            .any(|o: &StepOutcome| !o.failures.is_empty())
+        {
             skipped.push(step_name);
             continue;
         }
@@ -90,7 +93,9 @@ pub async fn run_flow(
         let resolved = match resolver::resolve_with_vars(workspace, &request_path, &vars) {
             Ok(r) => r,
             Err(e) => {
-                outcome.failures.push(format!("could not resolve request: {e}"));
+                outcome
+                    .failures
+                    .push(format!("could not resolve request: {e}"));
                 outcomes.push(outcome);
                 continue;
             }

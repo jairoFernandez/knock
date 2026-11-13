@@ -76,10 +76,18 @@ pub fn derive_name(url: &str) -> String {
         .copied()
         .filter(|s| !NOISE.contains(&s.to_ascii_lowercase().as_str()) && !is_version(s))
         .collect();
-    let pick = if meaningful.is_empty() { &segments } else { &meaningful };
+    let pick = if meaningful.is_empty() {
+        &segments
+    } else {
+        &meaningful
+    };
     let tail = &pick[pick.len().saturating_sub(2)..];
     if tail.is_empty() {
-        if host.is_empty() { "/".into() } else { host }
+        if host.is_empty() {
+            "/".into()
+        } else {
+            host
+        }
     } else {
         tail.join("/")
     }
@@ -114,7 +122,10 @@ fn split_url(url: &str) -> (String, String) {
     let t = url.trim();
     if let Some(rest) = t.strip_prefix("{{") {
         let path = rest.split_once("}}").map(|(_, p)| p).unwrap_or("");
-        return (String::new(), path.split('?').next().unwrap_or("").to_string());
+        return (
+            String::new(),
+            path.split('?').next().unwrap_or("").to_string(),
+        );
     }
     let without_scheme = t.split_once("://").map(|(_, r)| r).unwrap_or(t);
     let (authority, path) = match without_scheme.find('/') {
@@ -122,8 +133,14 @@ fn split_url(url: &str) -> (String, String) {
         None => (without_scheme, ""),
     };
     let authority = authority.split('?').next().unwrap_or("");
-    let host = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
-    (host.to_string(), path.split('?').next().unwrap_or("").to_string())
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    (
+        host.to_string(),
+        path.split('?').next().unwrap_or("").to_string(),
+    )
 }
 
 pub fn create(
@@ -170,7 +187,11 @@ pub fn create(
     }
 
     let rel_in_requests = match &opts.path {
-        Some(p) => p.trim().trim_start_matches('/').trim_end_matches(".toml").to_string(),
+        Some(p) => p
+            .trim()
+            .trim_start_matches('/')
+            .trim_end_matches(".toml")
+            .to_string(),
         None => {
             let folder = opts
                 .folder
@@ -185,7 +206,11 @@ pub fn create(
                 }
             );
             let folder = folder.trim().trim_matches('/');
-            if folder.is_empty() { file } else { format!("{folder}/{file}") }
+            if folder.is_empty() {
+                file
+            } else {
+                format!("{folder}/{file}")
+            }
         }
     };
     if rel_in_requests.split('/').any(|s| s == "..") || rel_in_requests.is_empty() {
@@ -239,7 +264,11 @@ fn var_name_for_header(header: &str, value: &str) -> (String, String, String) {
         }
     }
     let base = lower.trim_start_matches("x-").replace('-', "_");
-    let var = if base.is_empty() { "secret".into() } else { base };
+    let var = if base.is_empty() {
+        "secret".into()
+    } else {
+        base
+    };
     let templated = format!("{{{{{var}}}}}");
     (var, templated, value.to_string())
 }
@@ -294,7 +323,9 @@ fn extract_json(v: &mut Value, push: &mut dyn FnMut(String, String) -> String) {
         Value::Object(map) => {
             for (k, child) in map.iter_mut() {
                 match child {
-                    Value::String(s) if is_sensitive_name(k) && !s.contains("{{") && !s.is_empty() => {
+                    Value::String(s)
+                        if is_sensitive_name(k) && !s.contains("{{") && !s.is_empty() =>
+                    {
                         let used = push(slugify(k).replace(['-', '.'], "_"), s.clone());
                         *s = format!("{{{{{used}}}}}");
                     }
@@ -392,10 +423,7 @@ fn store_secrets(
         std::fs::write(&local, content)?;
     }
     ensure_gitignored(&workspace.root)?;
-    Ok((
-        format!("environments/{env}.local.toml"),
-        renames,
-    ))
+    Ok((format!("environments/{env}.local.toml"), renames))
 }
 
 fn ensure_gitignored(root: &Path) -> std::io::Result<()> {
@@ -417,7 +445,10 @@ fn quote(s: &str) -> String {
 }
 
 fn key(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         s.to_string()
     } else {
         quote(s)
@@ -452,7 +483,10 @@ pub fn render_toml(req: &NewRequest, name: &str) -> String {
             }
             // TOML has no null: fall back to a raw JSON text body.
             Err(_) => {
-                if !headers.keys().any(|k| k.eq_ignore_ascii_case("content-type")) {
+                if !headers
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case("content-type"))
+                {
                     headers.insert("Content-Type".into(), "application/json".into());
                 }
                 Some(format!(
@@ -489,17 +523,27 @@ mod tests {
     fn ws() -> (tempfile::TempDir, Workspace) {
         let dir = tempfile::tempdir().unwrap();
         let root = crate::workspace::init_at(dir.path(), "ws", false).unwrap();
-        std::fs::write(root.join("environments/local.toml"), "base_url = \"http://x\"\n").unwrap();
+        std::fs::write(
+            root.join("environments/local.toml"),
+            "base_url = \"http://x\"\n",
+        )
+        .unwrap();
         let ws = Workspace::load(root).unwrap();
         (dir, ws)
     }
 
     #[test]
     fn derives_name_and_folder() {
-        assert_eq!(derive_name("https://pokeapi.co/api/v2/pokemon/ditto"), "pokemon/ditto");
+        assert_eq!(
+            derive_name("https://pokeapi.co/api/v2/pokemon/ditto"),
+            "pokemon/ditto"
+        );
         assert_eq!(derive_name("https://x.io"), "x.io");
         assert_eq!(derive_name("{{base_url}}/users/1?x=1"), "users/1");
-        assert_eq!(derive_folder("https://user@api.x.io:8080/a"), "api.x.io:8080");
+        assert_eq!(
+            derive_folder("https://user@api.x.io:8080/a"),
+            "api.x.io:8080"
+        );
         assert_eq!(derive_folder("{{base_url}}/a"), "");
         assert_eq!(slugify("Pokemon / Ditto!"), "pokemon-ditto");
     }
@@ -508,7 +552,10 @@ mod tests {
     fn creates_file_and_moves_secrets_to_local_env() {
         let (_d, ws) = ws();
         let mut headers = IndexMap::new();
-        headers.insert("Authorization".to_string(), "Bearer sk-live-123".to_string());
+        headers.insert(
+            "Authorization".to_string(),
+            "Bearer sk-live-123".to_string(),
+        );
         headers.insert("Accept".to_string(), "application/json".to_string());
         let mut query = IndexMap::new();
         query.insert("api_key".to_string(), "qk-999".to_string());
@@ -517,17 +564,28 @@ mod tests {
             url: "https://api.x.io/v1/users".into(),
             headers,
             query,
-            body: Some(NewBody::Json(json!({"name": "Ann", "password": "hunter22", "n": null}))),
+            body: Some(NewBody::Json(
+                json!({"name": "Ann", "password": "hunter22", "n": null}),
+            )),
             ..Default::default()
         };
         let created = create(&ws, req, &CreateOptions::default()).unwrap();
         assert_eq!(created.path, "requests/api.x.io/post-users.toml");
-        assert_eq!(created.extracted_secrets, vec!["token", "api_key", "password"]);
+        assert_eq!(
+            created.extracted_secrets,
+            vec!["token", "api_key", "password"]
+        );
 
         let file = std::fs::read_to_string(ws.root.join(&created.path)).unwrap();
-        assert!(file.contains("Authorization = \"Bearer {{token}}\""), "{file}");
+        assert!(
+            file.contains("Authorization = \"Bearer {{token}}\""),
+            "{file}"
+        );
         assert!(file.contains("api_key = \"{{api_key}}\""), "{file}");
-        assert!(!file.contains("sk-live-123") && !file.contains("hunter22"), "{file}");
+        assert!(
+            !file.contains("sk-live-123") && !file.contains("hunter22"),
+            "{file}"
+        );
         let parsed = parser::parse_request(&ws.root.join(&created.path)).unwrap();
         assert_eq!(parsed.method, "POST");
 

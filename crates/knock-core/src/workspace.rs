@@ -130,7 +130,10 @@ impl Workspace {
     /// Path relative to the root with forward slashes.
     pub fn rel(&self, path: &Path) -> String {
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
+        let root = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
         canon
             .strip_prefix(&root)
             .unwrap_or(&canon)

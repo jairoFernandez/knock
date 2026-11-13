@@ -31,7 +31,11 @@ pub async fn serve(workspace: Option<PathBuf>) -> Result<()> {
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(msg) => server.handle(msg).await,
-            Err(e) => Some(error_reply(Value::Null, -32700, &format!("parse error: {e}"))),
+            Err(e) => Some(error_reply(
+                Value::Null,
+                -32700,
+                &format!("parse error: {e}"),
+            )),
         };
         if let Some(reply) = reply {
             let mut out = serde_json::to_string(&reply)?;
@@ -142,7 +146,9 @@ impl Server {
             }
             "knock_run_flow" => {
                 let f = s("flow").ok_or_else(|| anyhow!("'flow' is required"))?;
-                Ok(serde_json::to_value(ops::run_flow(&ws, &f, env.as_deref(), false).await?)?)
+                Ok(serde_json::to_value(
+                    ops::run_flow(&ws, &f, env.as_deref(), false).await?,
+                )?)
             }
             "knock_create_request" => {
                 let url = s("url").ok_or_else(|| anyhow!("'url' is required"))?;
@@ -158,7 +164,9 @@ impl Server {
                     req.url = base.to_string();
                     for pair in q.split('&').filter(|p| !p.is_empty()) {
                         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-                        req.query.entry(k.to_string()).or_insert_with(|| v.to_string());
+                        req.query
+                            .entry(k.to_string())
+                            .or_insert_with(|| v.to_string());
                     }
                 }
                 req.body = match (args.get("json_body"), s("text_body")) {
@@ -239,7 +247,8 @@ fn to_text(v: &Value) -> String {
 }
 
 fn tools() -> Value {
-    let env = json!({ "type": "string", "description": "Environment name; defaults to the active one" });
+    let env =
+        json!({ "type": "string", "description": "Environment name; defaults to the active one" });
     let create_common = json!({
         "name": { "type": "string", "description": "Display name; defaults to the tail of the URL path" },
         "folder": { "type": "string", "description": "Folder under requests/; defaults to the URL host" },
@@ -356,7 +365,12 @@ mod tests {
     fn server() -> (tempfile::TempDir, Server) {
         let dir = tempfile::tempdir().unwrap();
         let root = knock_core::init_at(dir.path(), "ws", false).unwrap();
-        (dir, Server { workspace: Some(root) })
+        (
+            dir,
+            Server {
+                workspace: Some(root),
+            },
+        )
     }
 
     #[tokio::test]
@@ -410,7 +424,10 @@ mod tests {
         );
 
         let listed = s.call("knock_list", &json!({})).await.unwrap();
-        assert_eq!(listed["requests"][0]["path"], "requests/api.x.io/get-me.toml");
+        assert_eq!(
+            listed["requests"][0]["path"],
+            "requests/api.x.io/get-me.toml"
+        );
 
         let bad = s
             .handle(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"knock_run_request","arguments":{"request":"nope"}}}))

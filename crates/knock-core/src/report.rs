@@ -118,7 +118,12 @@ pub fn response_report(resp: &Response, r: &Redactor, max_body: usize) -> Respon
     }
 }
 
-pub fn run_report(req: &ResolvedRequest, resp: &Response, r: &Redactor, max_body: usize) -> RunReport {
+pub fn run_report(
+    req: &ResolvedRequest,
+    resp: &Response,
+    r: &Redactor,
+    max_body: usize,
+) -> RunReport {
     RunReport {
         name: req.name.clone().filter(|n| !n.trim().is_empty()),
         request: request_report(req, r),
@@ -131,7 +136,10 @@ fn body_value(bytes: &[u8], r: &Redactor, max_body: usize) -> (Value, bool) {
         return (Value::Null, false);
     }
     let Ok(text) = std::str::from_utf8(bytes) else {
-        return (Value::String(format!("<{} bytes binary>", bytes.len())), false);
+        return (
+            Value::String(format!("<{} bytes binary>", bytes.len())),
+            false,
+        );
     };
     if bytes.len() <= max_body {
         if let Ok(v) = serde_json::from_str::<Value>(text) {

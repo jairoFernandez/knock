@@ -22,7 +22,13 @@ fn search_dirs() -> Vec<PathBuf> {
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
     if let Some(home) = dirs::home_dir() {
-        for rel in [".local/bin", ".cargo/bin", ".claude/local", ".npm-global/bin", ".bun/bin"] {
+        for rel in [
+            ".local/bin",
+            ".cargo/bin",
+            ".claude/local",
+            ".npm-global/bin",
+            ".bun/bin",
+        ] {
             dirs.push(home.join(rel));
         }
     }
@@ -33,8 +39,16 @@ fn search_dirs() -> Vec<PathBuf> {
 }
 
 fn find_binary(name: &str) -> Option<PathBuf> {
-    let exe = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
-    let cmd = if cfg!(windows) { format!("{name}.cmd") } else { name.to_string() };
+    let exe = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let cmd = if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        name.to_string()
+    };
     search_dirs()
         .into_iter()
         .flat_map(|d| [d.join(&exe), d.join(&cmd)])
@@ -59,7 +73,8 @@ pub async fn agents_status(root: Option<String>) -> AgentsStatus {
     let claude = find_binary("claude");
     let mcp_registered = claude.as_ref().and_then(|c| {
         let mut cmd = Command::new(c);
-        cmd.args(["mcp", "get", "knock"]).env("PATH", path_with_search_dirs());
+        cmd.args(["mcp", "get", "knock"])
+            .env("PATH", path_with_search_dirs());
         run_with_timeout(cmd, Duration::from_secs(15)).map(|o| o.status.success())
     });
     AgentsStatus {

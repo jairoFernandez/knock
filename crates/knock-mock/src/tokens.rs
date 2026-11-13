@@ -39,14 +39,31 @@ pub struct TokenInfo {
 }
 
 const fn t(group: &'static str, token: &'static str, description: &'static str) -> TokenInfo {
-    TokenInfo { token, description, snippet: None, group }
+    TokenInfo {
+        token,
+        description,
+        snippet: None,
+        group,
+    }
 }
 
 pub const CATALOG: &[TokenInfo] = &[
     t("Request", "params.id", "Path param (route /users/{id})"),
-    t("Request", "query.page|1", "Query param, with default after |"),
-    t("Request", "header.authorization", "Request header (case-insensitive)"),
-    t("Request", "body.email", "Field from JSON request body (dot path)"),
+    t(
+        "Request",
+        "query.page|1",
+        "Query param, with default after |",
+    ),
+    t(
+        "Request",
+        "header.authorization",
+        "Request header (case-insensitive)",
+    ),
+    t(
+        "Request",
+        "body.email",
+        "Field from JSON request body (dot path)",
+    ),
     t("Request", "body", "Whole request body"),
     t("Request", "request.method", "HTTP method"),
     t("Request", "request.path", "Request path"),
@@ -77,16 +94,36 @@ pub const CATALOG: &[TokenInfo] = &[
     t("Text", "lorem.sentence", "Sentence"),
     t("Text", "lorem.paragraph", "Paragraph"),
     t("Strings", "string(16)", "Letters + digits, length 16"),
-    t("Strings", "string.alpha(8..12)", "Letters only, length 8–12"),
+    t(
+        "Strings",
+        "string.alpha(8..12)",
+        "Letters only, length 8–12",
+    ),
     t("Strings", "string.lower(8)", "Lowercase letters"),
     t("Strings", "string.upper(8)", "Uppercase letters"),
     t("Strings", "string.numeric(6)", "Digits only (PIN, code)"),
     t("Strings", "string.hex(32)", "Lowercase hex"),
-    t("Strings", "string.symbols(16)", "Letters + digits + symbols"),
-    t("Strings", "string.password(16)", "Password: ≥1 upper, lower, digit, symbol"),
+    t(
+        "Strings",
+        "string.symbols(16)",
+        "Letters + digits + symbols",
+    ),
+    t(
+        "Strings",
+        "string.password(16)",
+        "Password: ≥1 upper, lower, digit, symbol",
+    ),
     t("Strings", "string.chars(8, ABC123)", "Custom character set"),
-    t("Numbers", "number.int(1..100)", "Integer in range (JSON number)"),
-    t("Numbers", "number.float(0..1)", "Float in range (JSON number)"),
+    t(
+        "Numbers",
+        "number.int(1..100)",
+        "Integer in range (JSON number)",
+    ),
+    t(
+        "Numbers",
+        "number.float(0..1)",
+        "Float in range (JSON number)",
+    ),
     t("Numbers", "bool", "true / false (JSON boolean)"),
     t("Dates", "date.iso", "Now, RFC 3339"),
     t("Dates", "date.today", "Today, YYYY-MM-DD"),
@@ -132,7 +169,14 @@ pub fn interpolate_value(value: &Value, rng: &mut StdRng) -> Value {
 }
 
 pub fn interpolate_value_ctx(value: &Value, rng: &mut StdRng, ctx: Option<&RequestCtx>) -> Value {
-    walk(value, &mut Env { rng, ctx, index: None })
+    walk(
+        value,
+        &mut Env {
+            rng,
+            ctx,
+            index: None,
+        },
+    )
 }
 
 /// Interpolate tokens inside a free-form string. Always returns a String.
@@ -141,7 +185,14 @@ pub fn interpolate_str(s: &str, rng: &mut StdRng) -> String {
 }
 
 pub fn interpolate_str_ctx(s: &str, rng: &mut StdRng, ctx: Option<&RequestCtx>) -> String {
-    replace_all(s, &mut Env { rng, ctx, index: None })
+    replace_all(
+        s,
+        &mut Env {
+            rng,
+            ctx,
+            index: None,
+        },
+    )
 }
 
 /// Interpolate with a fresh entropy-seeded RNG. Convenience for previews.
@@ -197,7 +248,9 @@ fn repeat_marker(arr: &[Value]) -> Option<(usize, usize)> {
 
 fn replace_all(s: &str, env: &mut Env) -> String {
     token_re()
-        .replace_all(s, |caps: &regex::Captures| stringify(&resolve(&caps[1], env)))
+        .replace_all(s, |caps: &regex::Captures| {
+            stringify(&resolve(&caps[1], env))
+        })
         .into_owned()
 }
 
@@ -324,7 +377,11 @@ fn resolve_request(token: &str, env: &Env) -> Option<Option<Value>> {
     let found: Option<Value> = match (ns, key) {
         ("params", Some(k)) => ctx.params.get(k).cloned().map(Value::String),
         ("query", Some(k)) => ctx.query.get(k).cloned().map(Value::String),
-        ("header", Some(k)) => ctx.headers.get(&k.to_ascii_lowercase()).cloned().map(Value::String),
+        ("header", Some(k)) => ctx
+            .headers
+            .get(&k.to_ascii_lowercase())
+            .cloned()
+            .map(Value::String),
         ("body", None) => ctx.body.clone(),
         ("body", Some(path)) => ctx.body.as_ref().and_then(|b| lookup(b, path)).cloned(),
         ("request", Some("method")) => Some(Value::String(ctx.method.clone())),
@@ -373,7 +430,11 @@ fn string_token(method: &str, arg: &str, rng: &mut StdRng) -> Option<String> {
         _ => return None,
     };
     let chars: Vec<char> = charset.chars().collect();
-    Some((0..len).map(|_| chars[rng.gen_range(0..chars.len())]).collect())
+    Some(
+        (0..len)
+            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .collect(),
+    )
 }
 
 /// Random string guaranteed to contain at least one char of each class
@@ -562,11 +623,21 @@ mod tests {
 
     #[test]
     fn string_classes() {
-        assert!(render("{{string.numeric(10)}}").chars().all(|c| c.is_ascii_digit()));
-        assert!(render("{{string.lower(10)}}").chars().all(|c| c.is_ascii_lowercase()));
-        assert!(render("{{string.upper(10)}}").chars().all(|c| c.is_ascii_uppercase()));
-        assert!(render("{{string.alpha(10)}}").chars().all(|c| c.is_ascii_alphabetic()));
-        assert!(render("{{string.hex(10)}}").chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(render("{{string.numeric(10)}}")
+            .chars()
+            .all(|c| c.is_ascii_digit()));
+        assert!(render("{{string.lower(10)}}")
+            .chars()
+            .all(|c| c.is_ascii_lowercase()));
+        assert!(render("{{string.upper(10)}}")
+            .chars()
+            .all(|c| c.is_ascii_uppercase()));
+        assert!(render("{{string.alpha(10)}}")
+            .chars()
+            .all(|c| c.is_ascii_alphabetic()));
+        assert!(render("{{string.hex(10)}}")
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -620,14 +691,22 @@ mod tests {
             if let Some(snippet) = info.snippet {
                 let v: Value = serde_json::from_str(snippet).expect("snippet is JSON");
                 let out = interpolate_value_ctx(&v, &mut rng(), Some(&ctx));
-                assert!(!out.to_string().contains("{{"), "snippet {snippet} did not resolve");
+                assert!(
+                    !out.to_string().contains("{{"),
+                    "snippet {snippet} did not resolve"
+                );
                 continue;
             }
             if info.token == "index" {
                 continue;
             }
-            let out = interpolate_str_ctx(&format!("{{{{{}}}}}", info.token), &mut rng(), Some(&ctx));
-            assert!(!out.starts_with("{{"), "token {} did not resolve", info.token);
+            let out =
+                interpolate_str_ctx(&format!("{{{{{}}}}}", info.token), &mut rng(), Some(&ctx));
+            assert!(
+                !out.starts_with("{{"),
+                "token {} did not resolve",
+                info.token
+            );
         }
     }
 
@@ -678,7 +757,8 @@ mod tests {
 
     #[test]
     fn repeat_range_and_nested() {
-        let input = json!(["{{repeat(2)}}", {"sub": ["{{repeat(1..3)}}", "{{index}}"], "i": "{{index}}"}]);
+        let input =
+            json!(["{{repeat(2)}}", {"sub": ["{{repeat(1..3)}}", "{{index}}"], "i": "{{index}}"}]);
         let out = interpolate_value(&input, &mut rng());
         let arr = out.as_array().unwrap();
         assert_eq!(arr.len(), 2);

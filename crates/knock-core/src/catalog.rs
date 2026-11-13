@@ -77,7 +77,11 @@ pub fn catalog(workspace: &Workspace) -> Catalog {
         .into_iter()
         .filter_map(|p| {
             let stem = p.file_name()?.to_str()?.strip_suffix(".toml")?.to_string();
-            Some(stem.strip_suffix(".local").map(str::to_string).unwrap_or(stem))
+            Some(
+                stem.strip_suffix(".local")
+                    .map(str::to_string)
+                    .unwrap_or(stem),
+            )
         })
         .collect();
     environments.sort();
