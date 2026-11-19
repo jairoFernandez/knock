@@ -16,6 +16,12 @@ import { ColorTool } from "./ColorTool";
 import { UnitTool } from "./UnitTool";
 import { GraphqlTool } from "./GraphqlTool";
 import { JwkTool } from "./JwkTool";
+import { JwtTool } from "./JwtTool";
+import { SecurityHeadersTool } from "./SecurityHeadersTool";
+import { SecretScanTool } from "./SecretScanTool";
+import { TotpTool } from "./TotpTool";
+import { PasswordTool } from "./PasswordTool";
+import { KeyPairTool } from "./KeyPairTool";
 
 export type ToolKey =
   | "dashboard"
@@ -40,11 +46,17 @@ export type ToolKey =
   | "color"
   | "unit"
   | "gql"
-  | "jwk";
+  | "jwk"
+  | "keypair"
+  | "secheaders"
+  | "secrets"
+  | "totp"
+  | "password";
 
 export type GroupKey =
   | "encoding"
   | "crypto"
+  | "security"
   | "parsing"
   | "text"
   | "generation"
@@ -64,6 +76,7 @@ export interface ToolDef {
 export const GROUPS: { key: GroupKey; label: string }[] = [
   { key: "encoding", label: "Encoding" },
   { key: "crypto", label: "Crypto / Auth" },
+  { key: "security", label: "Security" },
   { key: "parsing", label: "Parsing" },
   { key: "text", label: "Text / Code" },
   { key: "generation", label: "Generators" },
@@ -107,7 +120,8 @@ export const TOOLS: ToolDef[] = [
     short: "JWT",
     group: "crypto",
     description:
-      "Decode JWTs (colored header/payload/signature), edit JSON parts to re-sign with HMAC HS256/384/512, or use alg=none. Translates exp/iat/nbf to readable dates with quick-set buttons. Secret accepts raw or base64.",
+      "Decode a JWT without altering it, verify its signature (HS* secret; RS/PS/ES/EdDSA with a PEM, certificate, JWK or JWKS picked by kid) and audit it: alg none, well-known or short secrets, algorithm confusion, embedded/remote keys, kid injection, missing exp/iss/aud, long lifetimes, sensitive claims. Explains every claim and runs server-side iss/aud/exp checks. Build & sign mode creates tokens with any alg, including generated key pairs.",
+    Component: JwtTool,
   },
   {
     key: "hash",
@@ -135,6 +149,52 @@ export const TOOLS: ToolDef[] = [
     description:
       "Convert JWK to PEM (RSA public, builds proper DER SubjectPublicKeyInfo). PEM body inspection is limited — full ASN.1 parsing not implemented.",
     Component: JwkTool,
+  },
+  {
+    key: "keypair",
+    title: "Key pair",
+    short: "KP",
+    group: "crypto",
+    description:
+      "Generate RSA (2048/3072/4096), EC (P-256/384/521) or Ed25519 key pairs with WebCrypto. Outputs PEM (SPKI/PKCS#8), JWK and a ready-to-publish JWKS with an RFC 7638 kid. Nothing is saved.",
+    Component: KeyPairTool,
+  },
+
+  {
+    key: "secheaders",
+    title: "Security headers",
+    short: "SH",
+    group: "security",
+    description:
+      "Paste response headers (curl -I, devtools, Knock) and get a grade: CSP weaknesses (unsafe-inline/eval, wildcards, object-src, base-uri), HSTS, clickjacking protection, nosniff, Referrer-Policy, Permissions-Policy, CORS misconfigurations, cookie flags (Secure, HttpOnly, SameSite, __Host-) and version disclosure.",
+    Component: SecurityHeadersTool,
+  },
+  {
+    key: "secrets",
+    title: "Secret scanner",
+    short: "SS",
+    group: "security",
+    description:
+      "Find leaked credentials in pasted text, logs or config: AWS, GitHub, GitLab, Slack, Stripe, Google, OpenAI, Anthropic, SendGrid, Twilio, npm, Azure, private keys, JWTs, credentials in URLs, plus high-entropy values assigned to secret-looking names. Shows line/column and redacts matches. Input is never saved.",
+    Component: SecretScanTool,
+  },
+  {
+    key: "totp",
+    title: "TOTP / 2FA",
+    short: "2FA",
+    group: "security",
+    description:
+      "Generate the current one-time code from a base32 secret or an otpauth:// URI (SHA1/256/512, 6–8 digits, custom period), with countdown and previous/next codes. Useful for testing login flows. The secret is never saved.",
+    Component: TotpTool,
+  },
+  {
+    key: "password",
+    title: "Password strength",
+    short: "PW",
+    group: "security",
+    description:
+      "Estimate password strength in bits, flag common passwords, sequences, keyboard walks, years and leetspeak words, and show crack times for online and offline attacks. Never saved.",
+    Component: PasswordTool,
   },
 
   {
