@@ -149,7 +149,23 @@ export interface ClickCursorMoveState {
   selectionLength: number;
   /** Pixel distance the pointer travelled between mousedown and mouseup. */
   dragDistance: number;
+  /** MouseEvent.detail: 2+ is a double/triple click selecting a word/line. */
+  clickCount?: number;
+  /** A modifier was held (Cmd/Ctrl-click opens links, Alt/Shift extend selection). */
+  modifier?: boolean;
+  /** A full-screen program (vim, less, htop) owns the alternate buffer. */
+  alternateBuffer?: boolean;
+  /** The program asked for mouse events; it handles clicks itself. */
+  mouseTracking?: boolean;
 }
+
+/**
+ * Delay before a click is turned into cursor movement. A double or triple
+ * click starts with a plain click; acting on it at once sends arrow keys that
+ * make the shell redraw the line under the word the user is about to select,
+ * so the selection lands on shifted text. The next mousedown cancels it.
+ */
+export const CLICK_MOVE_DELAY_MS = 180;
 
 /**
  * Whether a click should be translated into cursor-movement keys.
@@ -162,6 +178,11 @@ export interface ClickCursorMoveState {
 export function shouldMoveCursorForClick(state: ClickCursorMoveState): boolean {
   // A drag is a text selection, not a click.
   if (state.dragDistance > 3) return false;
+  if ((state.clickCount ?? 1) > 1) return false;
+  if (state.modifier) return false;
+  // Arrow keys mean something else to vim/less, and mouse-aware programs
+  // already receive the click themselves.
+  if (state.alternateBuffer || state.mouseTracking) return false;
   // The user is selecting text to copy; never disturb the input line.
   if (state.selectionLength > 0) return false;
   // Scrolled back through history: the clicked row is not the input line.

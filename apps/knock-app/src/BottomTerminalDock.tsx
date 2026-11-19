@@ -3,8 +3,11 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
+import { TermIcon } from "./terminalIcons";
 import {
+  IS_MAC,
   listShells,
+  shortcutLabel,
   terminalStore,
   type KubeTerminalSpawnArgs,
   type ShellInfo,
@@ -17,30 +20,6 @@ interface Props {
   onExpandedChange: (expanded: boolean) => void;
   onMaximizedChange: (maximized: boolean) => void;
   onHeightDelta: (delta: number) => void;
-}
-
-function DockIcon({
-  children,
-  size = 14,
-}: {
-  children: React.ReactNode;
-  size?: number;
-}) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      {children}
-    </svg>
-  );
 }
 
 export function BottomTerminalDock({
@@ -159,15 +138,12 @@ export function BottomTerminalDock({
                   spawnArgs
                     ? `New terminal for ${spawnArgs.project}/${spawnArgs.name}`
                     : "New plain shell"
-                } (Ctrl/Cmd+Shift+T)`}
+                } (${shortcutLabel("t", { shift: true })})`}
                 onClick={() => {
                   void openNewShell();
                 }}
               >
-                <DockIcon size={13}>
-                  <path d="M8 3v10" />
-                  <path d="M3 8h10" />
-                </DockIcon>
+                <TermIcon name="plus" size={13} />
                 <span>Shell</span>
               </button>
               {pickable.length > 0 && (
@@ -179,9 +155,7 @@ export function BottomTerminalDock({
                   aria-expanded={menuOpen}
                   onClick={toggleMenu}
                 >
-                  <DockIcon size={11}>
-                    <path d="M4 6.5 8 10l4-3.5" />
-                  </DockIcon>
+                  <TermIcon name="chevronDown" size={12} />
                 </button>
               )}
               {menuOpen &&
@@ -234,9 +208,7 @@ export function BottomTerminalDock({
                             void makeDefaultShell(s.id);
                           }}
                         >
-                          <DockIcon size={11}>
-                            <path d="M8 2.5 9.6 6l3.9.4-2.9 2.6.8 3.8L8 11l-3.4 1.8.8-3.8L2.5 6.4 6.4 6z" />
-                          </DockIcon>
+                          <TermIcon name="star" size={12} />
                         </button>
                       </div>
                     ))}
@@ -248,45 +220,48 @@ export function BottomTerminalDock({
               <>
                 <button
                   className="bottom-terminal-icon"
-                  title="Split right (Ctrl/Cmd+Shift+D)"
+                  title={`Split right (${shortcutLabel("d", { shift: true })})`}
                   aria-label="Split right"
                   onClick={() => {
                     void terminalStore.splitActive("h");
                     onExpandedChange(true);
                   }}
                 >
-                  <DockIcon size={13}>
-                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-                    <path d="M8 3v10" />
-                  </DockIcon>
+                  <TermIcon name="splitRight" />
                 </button>
                 <button
                   className="bottom-terminal-icon"
-                  title="Split down (Ctrl/Cmd+Shift+E)"
+                  title={`Split down (${shortcutLabel("e", { shift: true })})`}
                   aria-label="Split down"
                   onClick={() => {
                     void terminalStore.splitActive("v");
                     onExpandedChange(true);
                   }}
                 >
-                  <DockIcon size={13}>
-                    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
-                    <path d="M2.5 8h11" />
-                  </DockIcon>
+                  <TermIcon name="splitDown" />
                 </button>
                 <button
                   className="bottom-terminal-icon"
-                  title="Reset input modes — fixes pasting after a process left bracketed paste on (Ctrl/Cmd+Shift+R)"
+                  title={`Find in terminal (${shortcutLabel("f", { shift: !IS_MAC })})`}
+                  aria-label="Find in terminal"
+                  onClick={() => {
+                    const id = terminalStore.getActiveTab()?.activeLeaf;
+                    if (id) terminalStore.openFind(id);
+                    onExpandedChange(true);
+                  }}
+                >
+                  <TermIcon name="search" />
+                </button>
+                <button
+                  className="bottom-terminal-icon"
+                  title={`Reset input modes — fixes pasting after a process left bracketed paste on (${shortcutLabel("r", { shift: true })})`}
                   aria-label="Reset input modes"
                   onClick={() => {
                     terminalStore.resetInputModes();
                     onExpandedChange(true);
                   }}
                 >
-                  <DockIcon size={13}>
-                    <path d="M13 8a5 5 0 1 1-1.6-3.7" />
-                    <path d="M13 2.5V5h-2.5" />
-                  </DockIcon>
+                  <TermIcon name="reset" />
                 </button>
               </>
             )}
@@ -294,11 +269,14 @@ export function BottomTerminalDock({
               className="bottom-terminal-icon"
               title={expanded ? "Collapse terminal" : "Open terminal"}
               aria-label={expanded ? "Collapse terminal" : "Open terminal"}
-              onClick={() => onExpandedChange(!expanded)}
+              onClick={() => {
+                // Collapsing leaves maximized mode too, so re-opening restores
+                // the normal height instead of jumping back to full screen.
+                if (expanded && maximized) onMaximizedChange(false);
+                onExpandedChange(!expanded);
+              }}
             >
-              <DockIcon>
-                {expanded ? <path d="M4 6.5 8 10l4-3.5" /> : <path d="M4 9.5 8 6l4 3.5" />}
-              </DockIcon>
+              <TermIcon name={expanded ? "chevronDown" : "chevronUp"} />
             </button>
             <button
               className="bottom-terminal-icon"
@@ -309,23 +287,7 @@ export function BottomTerminalDock({
                 onExpandedChange(true);
               }}
             >
-              <DockIcon>
-                {maximized ? (
-                  <>
-                    <path d="M6.5 3.5H3.5v3" />
-                    <path d="M3.5 3.5 7 7" />
-                    <path d="M9.5 12.5h3v-3" />
-                    <path d="M12.5 12.5 9 9" />
-                  </>
-                ) : (
-                  <>
-                    <path d="M6.5 3.5h-3v3" />
-                    <path d="M3.5 6.5 7 3" />
-                    <path d="M9.5 12.5h3v-3" />
-                    <path d="M12.5 9.5 9 13" />
-                  </>
-                )}
-              </DockIcon>
+              <TermIcon name={maximized ? "restore" : "maximize"} />
             </button>
           </div>
         }

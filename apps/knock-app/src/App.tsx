@@ -32,6 +32,7 @@ import { OpenApiView } from "./OpenApiView";
 import { MockView } from "./MockView";
 import { BottomTerminalDock } from "./BottomTerminalDock";
 import { terminalStore, type KubeTerminalSpawnArgs } from "./kubeTerminalStore";
+import { dockRowHeight } from "./terminalLayout";
 import type { DirEntryDto, RecentEntry } from "./types";
 import type {
   KV,
@@ -624,9 +625,11 @@ export function App() {
     () => terminalStore.revision,
   );
   const terminalDockVisible = terminalStore.tabs.length > 0;
-  const terminalDockRowHeight = terminalDockMaximized
-    ? "minmax(0, calc(100vh - 58px))"
-    : `${terminalDockExpanded ? terminalDockHeight : 34}px`;
+  const terminalDockRowHeight = dockRowHeight({
+    expanded: terminalDockExpanded,
+    maximized: terminalDockMaximized,
+    height: terminalDockHeight,
+  });
   const terminalDockRows = terminalDockVisible
     ? `34px minmax(0, 1fr) ${terminalDockRowHeight} 24px`
     : undefined;

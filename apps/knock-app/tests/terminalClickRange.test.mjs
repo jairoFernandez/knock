@@ -7,6 +7,7 @@ import {
   shouldMoveCursorForClick,
   shouldResizePty,
   CLICK_OUTPUT_QUIET_MS,
+  CLICK_MOVE_DELAY_MS,
 } from "../.test-dist/src/terminalClickRange.js";
 
 function makeBuffer({ cols = 20, cursorRow, cursorCol, lines }) {
@@ -171,6 +172,36 @@ test("resumes moving the cursor once output goes quiet", () => {
     ),
     false,
   );
+});
+
+test("ignores the clicks of a double or triple click", () => {
+  // Moving the cursor on the first click of a word selection makes the shell
+  // redraw the line under the word the user is about to select.
+  assert.equal(shouldMoveCursorForClick(makeClickState({ clickCount: 2 })), false);
+  assert.equal(shouldMoveCursorForClick(makeClickState({ clickCount: 3 })), false);
+  assert.equal(shouldMoveCursorForClick(makeClickState({ clickCount: 1 })), true);
+});
+
+test("ignores modified clicks (link open, selection extend)", () => {
+  assert.equal(shouldMoveCursorForClick(makeClickState({ modifier: true })), false);
+});
+
+test("ignores clicks while a full-screen program owns the screen", () => {
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ alternateBuffer: true })),
+    false,
+  );
+});
+
+test("ignores clicks when the program tracks the mouse itself", () => {
+  assert.equal(
+    shouldMoveCursorForClick(makeClickState({ mouseTracking: true })),
+    false,
+  );
+});
+
+test("defers click-to-move long enough to see a double click", () => {
+  assert.ok(CLICK_MOVE_DELAY_MS >= 120 && CLICK_MOVE_DELAY_MS <= 300);
 });
 
 // -------- PTY resize gate --------

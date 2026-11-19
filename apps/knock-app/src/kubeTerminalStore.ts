@@ -10,18 +10,91 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import {
+  CLICK_MOVE_DELAY_MS,
   collectEditableSegments,
   getSegmentOffset,
   shouldMoveCursorForClick,
   shouldResizePty,
   type TerminalClickBuffer,
 } from "./terminalClickRange";
+import {
+  cleanCopiedText,
+  getTerminalKeyAction,
+  isOpenableUrl,
+  resolveInputTarget,
+  shouldOpenLink,
+  shouldRestartOnInput,
+  type TerminalKeyAction,
+} from "./terminalInput";
+import {
+  collectLeaves,
+  leafAfterClose,
+  removeLeaf,
+  replaceLeaf,
+  setRatio,
+  type Pane,
+} from "./terminalLayout";
 
-export type Pane =
-  | { kind: "leaf"; termId: string }
-  | { kind: "split"; orientation: "h" | "v"; ratio: number; a: Pane; b: Pane };
+export { collectLeaves, type Pane };
+
+export const IS_MAC =
+  typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent);
+
+/** Shortcut label for the current platform, e.g. "⌘K" or "Ctrl+Shift+K". */
+export function shortcutLabel(key: string, opts: { shift?: boolean } = {}): string {
+  if (IS_MAC) return `${opts.shift ? "⇧" : ""}⌘${key.toUpperCase()}`;
+  return `Ctrl+${opts.shift ? "Shift+" : ""}${key.toUpperCase()}`;
+}
+
+export const TERMINAL_BG = "#121418";
+
+const TERMINAL_THEME = {
+  background: TERMINAL_BG,
+  foreground: "#e3e6ec",
+  cursor: "#8fb4ff",
+  cursorAccent: TERMINAL_BG,
+  selectionBackground: "rgba(122, 162, 255, 0.32)",
+  selectionInactiveBackground: "rgba(122, 162, 255, 0.16)",
+  scrollbarSliderBackground: "rgba(255, 255, 255, 0.10)",
+  scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
+  scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.24)",
+  black: "#1e2127",
+  red: "#ff6b6b",
+  green: "#5fd38d",
+  yellow: "#f5c26b",
+  blue: "#6ea8fe",
+  magenta: "#c792ea",
+  cyan: "#56d4dd",
+  white: "#c8ccd4",
+  brightBlack: "#5c6370",
+  brightRed: "#ff8787",
+  brightGreen: "#7ee2a8",
+  brightYellow: "#ffd58a",
+  brightBlue: "#8fbcff",
+  brightMagenta: "#dcaaf5",
+  brightCyan: "#7ee7ee",
+  brightWhite: "#ffffff",
+};
+
+const SEARCH_DECORATIONS = {
+  matchBackground: "#5c4a1a",
+  matchBorder: "#5c4a1a",
+  matchOverviewRuler: "#f5c26b",
+  activeMatchBackground: "#b8860b",
+  activeMatchBorder: "#ffd58a",
+  activeMatchColorOverviewRuler: "#ffd58a",
+};
+
+export interface SearchState {
+  query: string;
+  caseSensitive: boolean;
+  resultIndex: number;
+  resultCount: number;
+}
 
 export interface Tab {
   id: string;
@@ -57,6 +130,11 @@ export interface TerminalEntry {
   sessionId: string | null;   // backend session id (null until spawned)
   term: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
+  /** terminal_spawn resolved for the current sessionId. */
+  spawned: boolean;
+  /** A PTY chunk arrived for the current sessionId. */
+  outputSeen: boolean;
   container: HTMLDivElement;  // the persistent DOM element
   unlisten: UnlistenFn[];
   exited: boolean;
@@ -77,6 +155,10 @@ export interface TerminalEntry {
   /** Geometry last sent to the PTY, so identical resizes aren't re-sent. */
   ptyCols: number;
   ptyRows: number;
+  /** Passphrase for the first spawn only; the decrypted file is cached after. */
+  initialPassphrase: string | null;
+  /** Deferred click-to-move, cancelled by a follow-up click (double-click). */
+  clickTimer: number | null;
 }
 
 /** Distinct, dark-mode-friendly colors used to tag terminal sessions. */
@@ -128,6 +210,9 @@ class Store {
   tabs: Tab[] = [];
   activeTabId: string | null = null;
   terminals = new Map<string, TerminalEntry>();
+  /** Pane whose find bar is open, if any. */
+  findTermId: string | null = null;
+  search: SearchState = { query: "", caseSensitive: false, resultIndex: -1, resultCount: 0 };
   revision = 0;
   private listeners = new Set<Listener>();
 
@@ -256,7 +341,9 @@ class Store {
   async closeLeaf(tabId: string, termId: string): Promise<void> {
     const tab = this.tabs.find((t) => t.id === tabId);
     if (!tab) return;
+    const neighbor = leafAfterClose(tab.layout, termId);
     const next = removeLeaf(tab.layout, termId);
+    if (this.findTermId === termId) this.findTermId = null;
     if (next === null) {
       // tab now empty
       this.tabs = this.tabs.filter((t) => t.id !== tabId);
@@ -266,17 +353,17 @@ class Store {
     } else {
       tab.layout = next;
       if (tab.activeLeaf === termId) {
-        const firstLeaf = collectLeaves(next)[0];
-        tab.activeLeaf = firstLeaf?.termId ?? "";
+        tab.activeLeaf = neighbor ?? collectLeaves(next)[0]?.termId ?? "";
       }
     }
     await this.disposeTerminal(termId);
     this.emit();
+    if (this.activeTabId === tabId && next) this.focusLeaf(tab.activeLeaf);
   }
 
   setLeafActive(tabId: string, termId: string) {
     const tab = this.tabs.find((t) => t.id === tabId);
-    if (!tab) return;
+    if (!tab || tab.activeLeaf === termId) return;
     tab.activeLeaf = termId;
     this.emit();
   }
@@ -305,10 +392,15 @@ class Store {
     container.style.height = "100%";
 
     const term = new Terminal({
-      fontFamily: "Menlo, Monaco, Consolas, 'Courier New', monospace",
-      fontSize: 12,
-      theme: { background: "#0f1115", foreground: "#d4d4d8" },
+      fontFamily:
+        "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace",
+      fontSize: 13,
+      lineHeight: 1.2,
+      theme: TERMINAL_THEME,
       cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 2,
+      cursorInactiveStyle: "outline",
       // A PTY already terminates lines with CRLF. Converting again turns a bare
       // \n — which processes use to redraw a line in place (spinners, progress
       // bars) — into a line feed, so output double-spaces and the scrollback
@@ -318,9 +410,22 @@ class Store {
       // Keep typing anchored to the prompt without yanking the view back to the
       // bottom on every chunk of process output.
       scrollOnUserInput: true,
+      // Option+click moves the cursor in full-screen programs on macOS; Alt+drag
+      // makes a column selection.
+      macOptionClickForcesSelection: true,
+      // Search decorations are a proposed API in xterm 6.
+      allowProposedApi: true,
     });
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
+    term.loadAddon(
+      new WebLinksAddon((ev, uri) => {
+        if (!shouldOpenLink(ev, IS_MAC) || !isOpenableUrl(uri)) return;
+        invoke("open_url", { url: uri }).catch(() => undefined);
+      }),
+    );
     term.open(container);
 
     const usedColors = new Set<string>();
@@ -336,6 +441,9 @@ class Store {
       sessionId: null,
       term,
       fit,
+      search,
+      spawned: false,
+      outputSeen: false,
       container,
       unlisten: [],
       exited: false,
@@ -347,28 +455,50 @@ class Store {
       pendingFocus: null,
       ptyCols: 0,
       ptyRows: 0,
+      initialPassphrase: args.passphrase,
+      clickTimer: null,
     };
 
-    // Buffer user input until the backend session id arrives.
-    const pending: string[] = [];
     term.onData((d) => {
-      if (entry.sessionId) {
-        invoke("terminal_write", { sessionId: entry.sessionId, data: d }).catch(
-          () => undefined,
-        );
-      } else {
-        pending.push(d);
+      if (shouldRestartOnInput(entry.exited, d)) {
+        void this.restart(entry.id);
+        return;
+      }
+      const target = resolveInputTarget(entry);
+      if (target) {
+        invoke("terminal_write", { sessionId: target, data: d }).catch(() => undefined);
       }
     });
-    (entry as TerminalEntry & { pending?: string[] }).pending = pending;
-    (entry as TerminalEntry & { initialPassphrase?: string | null }).initialPassphrase =
-      args.passphrase;
+
+    search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      if (this.findTermId !== entry.id) return;
+      this.search = { ...this.search, resultIndex, resultCount };
+      this.emit();
+    });
+
+    term.attachCustomKeyEventHandler((ev) => {
+      const action = getTerminalKeyAction(ev, {
+        isMac: IS_MAC,
+        hasSelection: term.hasSelection(),
+      });
+      if (!action) return true;
+      ev.preventDefault();
+      this.runAction(entry.id, action);
+      return false;
+    });
 
     // Click-to-position-cursor on the active editable buffer region.
     // This supports wrapped input plus common shell continuation prompts by
     // translating a click into N ← / → arrow keys sent through the PTY.
     let clickStart: { x: number; y: number } | null = null;
+    const cancelPendingClick = () => {
+      if (entry.clickTimer !== null) {
+        window.clearTimeout(entry.clickTimer);
+        entry.clickTimer = null;
+      }
+    };
     container.addEventListener("mousedown", (ev) => {
+      cancelPendingClick();
       if (ev.button !== 0) return;
       clickStart = { x: ev.clientX, y: ev.clientY };
     });
@@ -388,50 +518,198 @@ class Store {
           now: Date.now(),
           selectionLength: term.getSelection()?.length ?? 0,
           dragDistance: Math.max(dx, dy),
+          clickCount: ev.detail,
+          modifier: ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey,
+          alternateBuffer: buf.type === "alternate",
+          mouseTracking: term.modes.mouseTrackingMode !== "none",
         })
       ) {
         return;
       }
-
-      const screen = container.querySelector(".xterm-screen") as HTMLElement | null;
-      const target = screen ?? container;
-      const rect = target.getBoundingClientRect();
-      const cellW = rect.width / Math.max(1, term.cols);
-      const cellH = rect.height / Math.max(1, term.rows);
-      const col = Math.floor((ev.clientX - rect.left) / cellW);
-      const viewportRow = Math.floor((ev.clientY - rect.top) / cellH);
-      if (col < 0 || viewportRow < 0 || col >= term.cols || viewportRow >= term.rows) return;
-      const targetRow = getBufferRowFromViewport(term, viewportRow);
-      const clickBuffer = getClickBuffer(term);
-      const segments = collectEditableSegments(clickBuffer);
-      if (segments.length === 0) return;
-      const firstRow = segments[0]?.row ?? 0;
-      const lastRow = segments[segments.length - 1]?.row ?? 0;
-      if (targetRow < firstRow || targetRow > lastRow) return;
-      const targetOffset = getSegmentOffset(segments, targetRow, col);
-      const cursorOffset = getSegmentOffset(segments, clickBuffer.cursorRow, clickBuffer.cursorCol);
-      if (targetOffset === null || cursorOffset === null) return;
-      const delta = targetOffset - cursorOffset;
-      if (delta === 0) return;
-      const seq = delta > 0 ? "\x1b[C".repeat(delta) : "\x1b[D".repeat(-delta);
-      const sid = entry.sessionId;
-      if (sid) {
-        invoke("terminal_write", { sessionId: sid, data: seq }).catch(() => undefined);
-      }
+      const clientX = ev.clientX;
+      const clientY = ev.clientY;
+      entry.clickTimer = window.setTimeout(() => {
+        entry.clickTimer = null;
+        // Re-check what may have changed while waiting for a second click.
+        if (term.hasSelection() || Date.now() - entry.lastWriteAt < 50) return;
+        this.moveCursorToClick(entry, clientX, clientY);
+      }, CLICK_MOVE_DELAY_MS);
     });
 
     this.terminals.set(id, entry);
     return entry;
   }
 
+  private moveCursorToClick(entry: TerminalEntry, clientX: number, clientY: number) {
+    const { term, container } = entry;
+    const screen = container.querySelector(".xterm-screen") as HTMLElement | null;
+    const target = screen ?? container;
+    const rect = target.getBoundingClientRect();
+    const cellW = rect.width / Math.max(1, term.cols);
+    const cellH = rect.height / Math.max(1, term.rows);
+    const col = Math.floor((clientX - rect.left) / cellW);
+    const viewportRow = Math.floor((clientY - rect.top) / cellH);
+    if (col < 0 || viewportRow < 0 || col >= term.cols || viewportRow >= term.rows) return;
+    const targetRow = getBufferRowFromViewport(term, viewportRow);
+    const clickBuffer = getClickBuffer(term);
+    const segments = collectEditableSegments(clickBuffer);
+    if (segments.length === 0) return;
+    const firstRow = segments[0]?.row ?? 0;
+    const lastRow = segments[segments.length - 1]?.row ?? 0;
+    if (targetRow < firstRow || targetRow > lastRow) return;
+    const targetOffset = getSegmentOffset(segments, targetRow, col);
+    const cursorOffset = getSegmentOffset(segments, clickBuffer.cursorRow, clickBuffer.cursorCol);
+    if (targetOffset === null || cursorOffset === null) return;
+    const delta = targetOffset - cursorOffset;
+    if (delta === 0) return;
+    const seq = delta > 0 ? "\x1b[C".repeat(delta) : "\x1b[D".repeat(-delta);
+    const sid = resolveInputTarget(entry);
+    if (sid) {
+      invoke("terminal_write", { sessionId: sid, data: seq }).catch(() => undefined);
+    }
+  }
+
+  /** Run a keyboard/context-menu action against a pane. */
+  runAction(termId: string, action: TerminalKeyAction) {
+    switch (action) {
+      case "copy":
+        void this.copySelection(termId);
+        break;
+      case "paste":
+        void this.pasteClipboard(termId);
+        break;
+      case "selectAll":
+        this.terminals.get(termId)?.term.selectAll();
+        break;
+      case "clear":
+        this.clear(termId);
+        break;
+      case "find":
+        this.openFind(termId);
+        break;
+    }
+  }
+
+  async copySelection(termId: string): Promise<boolean> {
+    const entry = this.terminals.get(termId);
+    if (!entry || !entry.term.hasSelection()) return false;
+    const text = cleanCopiedText(entry.term.getSelection());
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return false;
+    }
+    // Like Warp: copying ends the selection so the next click works normally.
+    entry.term.clearSelection();
+    entry.term.focus();
+    return true;
+  }
+
+  async pasteClipboard(termId: string): Promise<void> {
+    const entry = this.terminals.get(termId);
+    if (!entry) return;
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return;
+    }
+    // term.paste() normalizes newlines and honors bracketed-paste mode.
+    if (text) entry.term.paste(text);
+    entry.term.focus();
+  }
+
+  /** Clear screen and scrollback, keeping the prompt line (Cmd+K). */
+  clear(termId: string) {
+    const entry = this.terminals.get(termId);
+    if (!entry) return;
+    if (entry.term.buffer.active.type === "alternate") return;
+    entry.term.clear();
+    entry.search.clearDecorations();
+    entry.term.focus();
+  }
+
+  openFind(termId: string) {
+    if (!this.terminals.has(termId)) return;
+    if (this.findTermId && this.findTermId !== termId) {
+      this.terminals.get(this.findTermId)?.search.clearDecorations();
+    }
+    this.findTermId = termId;
+    const entry = this.terminals.get(termId)!;
+    const selected = entry.term.getSelection();
+    if (selected && !selected.includes("\n")) {
+      this.search = { ...this.search, query: selected };
+    }
+    this.emit();
+  }
+
+  closeFind() {
+    const id = this.findTermId;
+    if (!id) return;
+    const entry = this.terminals.get(id);
+    entry?.search.clearDecorations();
+    entry?.term.clearSelection();
+    this.findTermId = null;
+    this.search = { ...this.search, resultIndex: -1, resultCount: 0 };
+    this.emit();
+    this.focusLeaf(id);
+  }
+
+  findIn(
+    termId: string,
+    query: string,
+    opts: { caseSensitive?: boolean; backwards?: boolean; incremental?: boolean } = {},
+  ) {
+    const entry = this.terminals.get(termId);
+    if (!entry) return;
+    const caseSensitive = opts.caseSensitive ?? this.search.caseSensitive;
+    this.search = { ...this.search, query, caseSensitive };
+    if (!query) {
+      entry.search.clearDecorations();
+      entry.term.clearSelection();
+      this.search = { ...this.search, resultIndex: -1, resultCount: 0 };
+      this.emit();
+      return;
+    }
+    const searchOpts = {
+      caseSensitive,
+      incremental: opts.incremental ?? false,
+      decorations: SEARCH_DECORATIONS,
+    };
+    if (opts.backwards) entry.search.findPrevious(query, searchOpts);
+    else entry.search.findNext(query, searchOpts);
+    this.emit();
+  }
+
+  /** Start a fresh shell in a pane whose process exited. */
+  async restart(termId: string): Promise<void> {
+    const entry = this.terminals.get(termId);
+    if (!entry || !entry.exited || entry.spawning) return;
+    for (const u of entry.unlisten) {
+      try {
+        u();
+      } catch {
+        /* no-op */
+      }
+    }
+    entry.unlisten = [];
+    entry.sessionId = null;
+    entry.spawned = false;
+    entry.outputSeen = false;
+    entry.exited = false;
+    entry.initialPassphrase = null;
+    // Soft reset (DECSTR): drops modes the dead process left on (mouse
+    // tracking, hidden cursor, app keypad) but keeps its output readable.
+    entry.term.write("\x1b[!p\r\n");
+    this.emit();
+    await this.spawn(entry);
+    this.focusLeaf(termId);
+  }
+
   private async spawn(entry: TerminalEntry): Promise<void> {
     if (entry.spawning || entry.sessionId) return;
     entry.spawning = true;
     try {
-      const e = entry as TerminalEntry & {
-        pending?: string[];
-        initialPassphrase?: string | null;
-      };
       const cols = entry.term.cols || 80;
       const rows = entry.term.rows || 24;
 
@@ -448,14 +726,22 @@ class Store {
       // prompt or the redraw that follows a signal. Generating the id here
       // lets the listeners exist first.
       const sessionId = cryptoRandomUuid();
+      entry.sessionId = sessionId;
+      entry.spawned = false;
+      entry.outputSeen = false;
       const dataEvt = `terminal:data:${sessionId}`;
       const exitEvt = `terminal:exit:${sessionId}`;
       const u1 = await listen<string>(dataEvt, (e) => {
+        if (entry.sessionId !== sessionId) return;
+        entry.outputSeen = true;
         entry.lastWriteAt = Date.now();
         entry.term.write(decodeBase64(e.payload));
       });
       const u2 = await listen<void>(exitEvt, () => {
-        entry.term.write("\r\n[process exited]\r\n");
+        if (entry.sessionId !== sessionId) return;
+        entry.term.write(
+          "\r\n\x1b[2m── process exited · press Enter to restart ──\x1b[0m\r\n",
+        );
         entry.exited = true;
         this.emit();
       });
@@ -465,7 +751,7 @@ class Store {
         await invoke<string>("terminal_spawn", {
           name: entry.name,
           project: entry.project,
-          passphrase: e.initialPassphrase ?? null,
+          passphrase: entry.initialPassphrase ?? null,
           cwd: entry.cwd,
           cols,
           rows,
@@ -477,24 +763,23 @@ class Store {
         u1();
         u2();
         entry.unlisten = entry.unlisten.filter((u) => u !== u1 && u !== u2);
+        entry.sessionId = null;
         throw err;
       }
 
-      entry.sessionId = sessionId;
+      entry.spawned = true;
+      entry.initialPassphrase = null;
       // Record what the PTY was created with so the first resize only fires if
       // the layout actually differs from the spawn geometry.
       entry.ptyCols = cols;
       entry.ptyRows = rows;
-
-      // Drop anything typed before the shell existed rather than replaying it.
-      // There was no prompt to receive those keys, and delivering them now
-      // injects stray characters into the first real prompt — the shell then
-      // reports them as an unknown command.
-      if (e.pending) {
-        e.pending = [];
-      }
+      // The layout may have settled while the shell was starting; push the
+      // real geometry now instead of waiting for the next ResizeObserver tick.
+      this.resizeLeaf(entry.id);
     } catch (err) {
-      entry.term.write(`\r\n[failed to spawn shell: ${String(err)}]\r\n`);
+      entry.term.write(
+        `\r\n\x1b[31m[failed to start shell: ${String(err)}]\x1b[0m\r\n\x1b[2mpress Enter to retry\x1b[0m\r\n`,
+      );
       entry.exited = true;
     } finally {
       entry.spawning = false;
@@ -509,10 +794,15 @@ class Store {
       cancelAnimationFrame(entry.resizeFrame);
       entry.resizeFrame = null;
     }
+    if (entry.clickTimer !== null) {
+      window.clearTimeout(entry.clickTimer);
+      entry.clickTimer = null;
+    }
     if (entry.pendingFocus) {
       entry.pendingFocus();
       entry.pendingFocus = null;
     }
+    if (this.findTermId === termId) this.findTermId = null;
     for (const u of entry.unlisten) {
       try {
         u();
@@ -554,7 +844,7 @@ class Store {
       /* no-op */
     }
     const { cols, rows } = entry.term;
-    if (!entry.sessionId) return;
+    if (!entry.sessionId || !entry.spawned || entry.exited) return;
     if (
       !shouldResizePty({
         cols,
@@ -703,46 +993,6 @@ export async function listShells(): Promise<ShellInfo[]> {
     shellsCache = [{ id: "auto", label: "Default shell", available: true }];
   }
   return shellsCache;
-}
-
-// -------- Pane tree helpers --------
-
-export function collectLeaves(p: Pane): { kind: "leaf"; termId: string }[] {
-  if (p.kind === "leaf") return [p];
-  return [...collectLeaves(p.a), ...collectLeaves(p.b)];
-}
-
-function replaceLeaf(p: Pane, termId: string, replacement: Pane): Pane {
-  if (p.kind === "leaf") {
-    return p.termId === termId ? replacement : p;
-  }
-  return {
-    ...p,
-    a: replaceLeaf(p.a, termId, replacement),
-    b: replaceLeaf(p.b, termId, replacement),
-  };
-}
-
-function removeLeaf(p: Pane, termId: string): Pane | null {
-  if (p.kind === "leaf") return p.termId === termId ? null : p;
-  const a = removeLeaf(p.a, termId);
-  const b = removeLeaf(p.b, termId);
-  if (a === null && b === null) return null;
-  if (a === null) return b!;
-  if (b === null) return a!;
-  return { ...p, a, b };
-}
-
-function setRatio(p: Pane, path: number[], ratio: number): Pane {
-  if (path.length === 0) {
-    if (p.kind === "split") return { ...p, ratio };
-    return p;
-  }
-  if (p.kind !== "split") return p;
-  const [head, ...rest] = path;
-  if (head === 0) return { ...p, a: setRatio(p.a, rest, ratio) };
-  if (head === 1) return { ...p, b: setRatio(p.b, rest, ratio) };
-  return p;
 }
 
 function clamp(v: number, lo: number, hi: number): number {

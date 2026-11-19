@@ -1,42 +1,28 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   terminalStore,
+  collectLeaves,
+  shortcutLabel,
   SESSION_COLORS,
   type Pane,
   type KubeTerminalSpawnArgs,
   type TerminalEntry,
 } from "./kubeTerminalStore";
+import { clampMenuPosition } from "./terminalInput";
+import { TermIcon } from "./terminalIcons";
 
 function useStoreSnapshot(): number {
   return useSyncExternalStore(
     (cb) => terminalStore.subscribe(cb),
     () => terminalStore.revision,
     () => terminalStore.revision,
-  );
-}
-
-function ShellControlIcon({
-  children,
-  size = 14,
-}: {
-  children: React.ReactNode;
-  size?: number;
-}) {
-  return (
-    <svg
-      className="shell-control-icon"
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      {children}
-    </svg>
   );
 }
 
@@ -62,6 +48,7 @@ function LeafView({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const entry = terminalStore.terminals.get(termId);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Attach the persistent xterm container DOM element here. React never
   // owns the xterm DOM — just the wrapper.
@@ -91,23 +78,297 @@ function LeafView({
     return <div className="kube-leaf kube-leaf-missing">(missing terminal)</div>;
   }
 
+  const findOpen = terminalStore.findTermId === termId;
+
   return (
     <div
-      className={`kube-leaf ${isActive ? "active" : ""} ${multi ? "multi" : ""}`}
+      className={`kube-leaf ${isActive ? "active" : ""} ${multi ? "multi" : ""} ${
+        entry.exited ? "exited" : ""
+      }`}
       style={{ "--leaf-color": entry.color } as React.CSSProperties}
       // Focus on every mousedown, not only when the active leaf changes:
       // clicking an already-active pane after focus drifted elsewhere (a tab
       // button, the splitter) must send keys — including Ctrl-C — back to the
       // PTY rather than to the window.
-      onMouseDown={() => {
+      onMouseDown={(e) => {
+        if ((e.target as HTMLElement).closest(".term-find, .kube-leaf-header")) return;
         terminalStore.setLeafActive(tabId, termId);
         terminalStore.focusLeaf(termId);
       }}
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest(".term-find, .kube-leaf-header input")) return;
+        e.preventDefault();
+        terminalStore.setLeafActive(tabId, termId);
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       {multi && <LeafHeader entry={entry} tabId={tabId} />}
-      <div ref={hostRef} className="kube-leaf-host" />
+      <div className="kube-leaf-body">
+        <div ref={hostRef} className="kube-leaf-host" />
+        {findOpen && <FindBar termId={termId} />}
+      </div>
+      {menu && (
+        <TerminalContextMenu
+          x={menu.x}
+          y={menu.y}
+          entry={entry}
+          tabId={tabId}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
+}
+
+function FindBar({ termId }: { termId: string }) {
+  useStoreSnapshot();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { query, caseSensitive, resultIndex, resultCount } = terminalStore.search;
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    if (query) terminalStore.findIn(termId, query, { incremental: true });
+    // Run once when the bar opens for this pane.
+  }, [termId]);
+
+  const status = !query
+    ? ""
+    : resultCount === 0
+      ? "No results"
+      : resultIndex >= 0
+        ? `${resultIndex + 1} of ${resultCount}`
+        : `${resultCount} found`;
+
+  return (
+    <div className="term-find" role="search" onMouseDown={(e) => e.stopPropagation()}>
+      <TermIcon name="search" size={13} />
+      <input
+        ref={inputRef}
+        className="term-find-input"
+        placeholder="Find"
+        value={query}
+        spellCheck={false}
+        onChange={(e) =>
+          terminalStore.findIn(termId, e.target.value, { incremental: true })
+        }
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            terminalStore.findIn(termId, query, { backwards: e.shiftKey });
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            terminalStore.closeFind();
+          }
+        }}
+      />
+      <span className={`term-find-count ${query && resultCount === 0 ? "none" : ""}`}>
+        {status}
+      </span>
+      <button
+        className={`term-find-btn term-find-case ${caseSensitive ? "on" : ""}`}
+        title="Match case"
+        aria-pressed={caseSensitive}
+        onClick={() =>
+          terminalStore.findIn(termId, query, { caseSensitive: !caseSensitive, incremental: true })
+        }
+      >
+        Aa
+      </button>
+      <button
+        className="term-find-btn"
+        title="Previous match (Shift+Enter)"
+        aria-label="Previous match"
+        onClick={() => terminalStore.findIn(termId, query, { backwards: true })}
+      >
+        <TermIcon name="arrowUp" size={13} />
+      </button>
+      <button
+        className="term-find-btn"
+        title="Next match (Enter)"
+        aria-label="Next match"
+        onClick={() => terminalStore.findIn(termId, query)}
+      >
+        <TermIcon name="arrowDown" size={13} />
+      </button>
+      <button
+        className="term-find-btn"
+        title="Close (Esc)"
+        aria-label="Close find"
+        onClick={() => terminalStore.closeFind()}
+      >
+        <TermIcon name="close" size={13} />
+      </button>
+    </div>
+  );
+}
+
+type MenuItem =
+  | { kind: "sep" }
+  | {
+      kind: "item";
+      label: string;
+      hint?: string;
+      danger?: boolean;
+      disabled?: boolean;
+      run: () => void;
+    };
+
+function TerminalContextMenu({
+  x,
+  y,
+  entry,
+  tabId,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  entry: TerminalEntry;
+  tabId: string;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  const hasSelection = entry.term.hasSelection();
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos(
+      clampMenuPosition(
+        x,
+        y,
+        { width: r.width, height: r.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+  }, [x, y]);
+
+  useEffect(() => {
+    function onDown(ev: MouseEvent) {
+      if (ref.current?.contains(ev.target as Node)) return;
+      onClose();
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", onClose);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  const id = entry.id;
+  const items: MenuItem[] = [
+    {
+      kind: "item",
+      label: "Copy",
+      hint: shortcutLabel("c", { shift: !isMacLike() }),
+      disabled: !hasSelection,
+      run: () => void terminalStore.copySelection(id),
+    },
+    {
+      kind: "item",
+      label: "Paste",
+      hint: shortcutLabel("v", { shift: !isMacLike() }),
+      run: () => void terminalStore.pasteClipboard(id),
+    },
+    {
+      kind: "item",
+      label: "Select all",
+      hint: shortcutLabel("a", { shift: !isMacLike() }),
+      run: () => terminalStore.runAction(id, "selectAll"),
+    },
+    { kind: "sep" },
+    {
+      kind: "item",
+      label: "Find…",
+      hint: shortcutLabel("f", { shift: !isMacLike() }),
+      run: () => terminalStore.openFind(id),
+    },
+    {
+      kind: "item",
+      label: "Clear",
+      hint: shortcutLabel("k", { shift: !isMacLike() }),
+      run: () => terminalStore.clear(id),
+    },
+    { kind: "sep" },
+    {
+      kind: "item",
+      label: "Split right",
+      hint: shortcutLabel("d", { shift: true }),
+      run: () => void terminalStore.splitActive("h"),
+    },
+    {
+      kind: "item",
+      label: "Split down",
+      hint: shortcutLabel("e", { shift: true }),
+      run: () => void terminalStore.splitActive("v"),
+    },
+    ...(entry.exited
+      ? [
+          {
+            kind: "item" as const,
+            label: "Restart shell",
+            hint: "Enter",
+            run: () => void terminalStore.restart(id),
+          },
+        ]
+      : []),
+    {
+      kind: "item",
+      label: "Reset input modes",
+      hint: shortcutLabel("r", { shift: true }),
+      run: () => terminalStore.resetInputModes(id),
+    },
+    { kind: "sep" },
+    {
+      kind: "item",
+      label: "Close pane",
+      danger: true,
+      run: () => void terminalStore.closeLeaf(tabId, id),
+    },
+  ];
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="term-menu"
+      role="menu"
+      style={{ left: pos.x, top: pos.y }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {items.map((it, i) =>
+        it.kind === "sep" ? (
+          <div key={`sep-${i}`} className="term-menu-sep" role="separator" />
+        ) : (
+          <button
+            key={it.label}
+            role="menuitem"
+            className={`term-menu-item ${it.danger ? "danger" : ""}`}
+            disabled={it.disabled}
+            onClick={() => {
+              onClose();
+              it.run();
+            }}
+          >
+            <span>{it.label}</span>
+            {it.hint && <kbd>{it.hint}</kbd>}
+          </button>
+        ),
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+function isMacLike(): boolean {
+  return shortcutLabel("x").startsWith("⌘");
 }
 
 function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
@@ -122,11 +383,15 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
   }
 
   return (
-    <div className="kube-leaf-header">
-      <span
+    <div
+      className="kube-leaf-header"
+      onMouseDown={() => terminalStore.setLeafActive(tabId, entry.id)}
+    >
+      <button
         className="kube-leaf-dot"
         style={{ background: entry.color }}
         title="Change color"
+        aria-label="Change color"
         onClick={(e) => {
           e.stopPropagation();
           setShowColors((v) => !v);
@@ -139,6 +404,7 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
               key={c}
               className={`kube-color-swatch ${c === entry.color ? "selected" : ""}`}
               style={{ background: c }}
+              aria-label={`Color ${c}`}
               onClick={() => {
                 terminalStore.setTerminalColor(entry.id, c);
                 setShowColors(false);
@@ -176,46 +442,32 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
       )}
       <span className="kube-leaf-tag">
         {entry.name ? `${entry.project}/${entry.name}` : entry.cwd || "shell"}
-        {entry.exited && " · exited"}
       </span>
+      {entry.exited && <span className="kube-leaf-badge">exited</span>}
       <div className="kube-leaf-actions">
         <button
           className="kube-leaf-action"
-          title="Split right"
+          title={`Split right (${shortcutLabel("d", { shift: true })})`}
           aria-label="Split right"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
-            terminalStore.splitActive("h");
+            void terminalStore.splitActive("h");
           }}
         >
-          <ShellControlIcon>
-            <path d="M2.5 3.5h11" />
-            <path d="M2.5 8h11" />
-            <path d="M2.5 12.5h11" />
-            <path d="M8 2.5v11" opacity="0.45" />
-            <path d="M10 8h3.5" />
-            <path d="M11.8 6.2 13.5 8l-1.7 1.8" />
-          </ShellControlIcon>
+          <TermIcon name="splitRight" size={13} />
         </button>
         <button
           className="kube-leaf-action"
-          title="Split down"
+          title={`Split down (${shortcutLabel("e", { shift: true })})`}
           aria-label="Split down"
           onClick={(e) => {
             e.stopPropagation();
             terminalStore.setLeafActive(tabId, entry.id);
-            terminalStore.splitActive("v");
+            void terminalStore.splitActive("v");
           }}
         >
-          <ShellControlIcon>
-            <path d="M3.5 2.5v11" />
-            <path d="M8 2.5v11" />
-            <path d="M12.5 2.5v11" />
-            <path d="M2.5 8h11" opacity="0.45" />
-            <path d="M8 10v3.5" />
-            <path d="M6.2 11.8 8 13.5l1.8-1.7" />
-          </ShellControlIcon>
+          <TermIcon name="splitDown" size={13} />
         </button>
         <button
           className="kube-leaf-action danger"
@@ -223,13 +475,10 @@ function LeafHeader({ entry, tabId }: { entry: TerminalEntry; tabId: string }) {
           aria-label="Close pane"
           onClick={(e) => {
             e.stopPropagation();
-            terminalStore.closeLeaf(tabId, entry.id);
+            void terminalStore.closeLeaf(tabId, entry.id);
           }}
         >
-          <ShellControlIcon>
-            <path d="M4.5 4.5l7 7" />
-            <path d="M11.5 4.5l-7 7" />
-          </ShellControlIcon>
+          <TermIcon name="close" size={13} />
         </button>
       </div>
     </div>
@@ -419,10 +668,7 @@ function TabButton({
           }
         }}
       >
-        <ShellControlIcon size={11}>
-          <path d="M4.5 4.5l7 7" />
-          <path d="M11.5 4.5l-7 7" />
-        </ShellControlIcon>
+        <TermIcon name="close" size={12} />
       </span>
     </button>
   );
@@ -474,10 +720,7 @@ export function KubeTerminalsPane({
                 : "New plain shell"
             }
           >
-            <ShellControlIcon size={13}>
-              <path d="M8 3v10" />
-              <path d="M3 8h10" />
-            </ShellControlIcon>
+            <TermIcon name="plus" size={13} />
             <span>Shell</span>
           </button>
         )}
@@ -505,7 +748,3 @@ export function KubeTerminalsPane({
   );
 }
 
-function collectLeaves(p: Pane): { kind: "leaf"; termId: string }[] {
-  if (p.kind === "leaf") return [p];
-  return [...collectLeaves(p.a), ...collectLeaves(p.b)];
-}
