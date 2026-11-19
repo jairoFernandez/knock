@@ -15,8 +15,10 @@ tauri-build = { version = "2", features = [] }
 knock-core = { path = "../../../crates/knock-core" }
 knock-mock = { path = "../../../crates/knock-mock" }
 knock-mock-adapter = { path = "../../../crates/knock-mock-adapter" }
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
+# Keep in step with @tauri-apps/api in package.json: Cargo.lock is not
+# committed, and the Tauri CLI refuses to build when major.minor differ.
+tauri = { version = "~2.12", features = [] }
+tauri-plugin-dialog = "~2.8" # matches @tauri-apps/plugin-dialog
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
