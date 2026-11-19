@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isCacheUsable, stargazerNotice } from "./stargazers";
 
 interface Props {
   repo: string;
@@ -26,7 +27,11 @@ interface CacheShape {
   users: Stargazer[];
 }
 
-function loadCache(repo: string, allowStale = false): Stargazer[] | null {
+function loadCache(
+  repo: string,
+  allowStale = false,
+  total: number | null = null,
+): Stargazer[] | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
@@ -34,6 +39,7 @@ function loadCache(repo: string, allowStale = false): Stargazer[] | null {
     if (parsed.repo !== repo) return null;
     if (!allowStale && Date.now() - parsed.fetched_at > CACHE_TTL_MS) return null;
     if (!Array.isArray(parsed.users) || parsed.users.length === 0) return null;
+    if (!allowStale && !isCacheUsable(parsed.users.length, total)) return null;
     return parsed.users;
   } catch {
     return null;
@@ -52,7 +58,7 @@ function saveCache(repo: string, users: Stargazer[]): void {
 
 function describeGitHubError(resp: Response): string {
   if (resp.status === 401) {
-    return "GitHub 401: the request carried invalid or expired credentials";
+    return "GitHub requires sign-in to list stargazers";
   }
   const remaining = resp.headers.get("x-ratelimit-remaining");
   if (resp.status === 429 || (resp.status === 403 && remaining === "0")) {
@@ -100,6 +106,7 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
   const [users, setUsers] = useState<Stargazer[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -111,7 +118,7 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
 
   useEffect(() => {
     if (tab !== "stargazers" || users !== null) return;
-    const cached = loadCache(repo);
+    const cached = loadCache(repo, false, stars);
     if (cached) {
       setUsers(cached);
       return;
@@ -125,11 +132,13 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
       })
       .catch((e) => {
         const stale = loadCache(repo, true);
-        if (stale) setUsers(stale);
-        else setError(e instanceof Error ? e.message : String(e));
+        if (stale) {
+          setUsers(stale);
+          setStale(true);
+        } else setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => setLoading(false));
-  }, [tab, users, repo]);
+  }, [tab, users, repo, stars]);
 
   async function openUrl(url: string) {
     try {
@@ -209,9 +218,34 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
               {loading && <div className="dim">Loading stargazers…</div>}
               {error && (
                 <div className="dim">
-                  Could not load stargazers ({error}).
+                  Could not load stargazers ({error}).{" "}
+                  <button
+                    className="link"
+                    onClick={() => openUrl(`https://github.com/${repo}/stargazers`)}
+                  >
+                    See them on GitHub
+                  </button>
                 </div>
               )}
+              {users &&
+                (() => {
+                  const notice = stargazerNotice({
+                    listed: users.length,
+                    total: stars,
+                    stale,
+                  });
+                  return notice ? (
+                    <div className="dim">
+                      {notice}{" "}
+                      <button
+                        className="link"
+                        onClick={() => openUrl(`https://github.com/${repo}/stargazers`)}
+                      >
+                        See all on GitHub
+                      </button>
+                    </div>
+                  ) : null;
+                })()}
               {users && users.length === 0 && !loading && (
                 <div className="dim">No stargazers yet — be the first ★</div>
               )}
