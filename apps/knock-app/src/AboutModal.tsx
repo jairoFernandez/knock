@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isCacheUsable, stargazerNotice } from "./stargazers";
+import { KnockLogo } from "./KnockLogo";
 
 interface Props {
   repo: string;
@@ -153,7 +154,7 @@ export function AboutModal({ repo, stars, version, releaseUrl, onClose }: Props)
       <div className="modal about-modal" onClick={(e) => e.stopPropagation()}>
         <div className="about-header">
           <div className="about-brand">
-            <div className="about-logo">K</div>
+            <KnockLogo size={36} />
             <div>
               <h2>Knock</h2>
               <div className="about-sub">

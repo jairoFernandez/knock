@@ -1,26 +1,17 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="kfill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#9e85ff"/>
-      <stop offset="100%" stop-color="#5b3fd1"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d1f2b"/><stop offset="1" stop-color="#0e0f16"/>
+    </linearGradient>
+    <linearGradient id="c" gradientUnits="userSpaceOnUse" x1="420" y1="280" x2="720" y2="740">
+      <stop offset="0" stop-color="#b39dff"/><stop offset="1" stop-color="#6d4dff"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-
-  <!-- content inset so dock thumbnail not oversized; shift left to compensate for right-side pulse -->
-  <g transform="translate(486 512) scale(0.5) translate(-512 -512)">
-    <!-- pulse rings -->
-    <g fill="none" stroke="#7a5cf0" stroke-linecap="round">
-      <circle cx="760" cy="290" r="58" stroke-opacity="0.45" stroke-width="18"/>
-      <circle cx="760" cy="290" r="104" stroke-opacity="0.22" stroke-width="18"/>
-    </g>
-    <circle cx="760" cy="290" r="30" fill="url(#kfill)"/>
-
-    <!-- monogram K -->
-    <g fill="url(#kfill)">
-      <rect x="252" y="276" width="112" height="472" rx="24"/>
-      <path d="M 388 512 L 632 276 L 760 276 L 460 568 Z"/>
-      <path d="M 460 480 L 776 748 L 648 748 L 388 528 Z"/>
-    </g>
-  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#edge)" stroke-width="3"/>
+  <path d="M360 312V712" fill="none" stroke="#f1eeff" stroke-width="100" stroke-linecap="round"/>
+  <path d="M676 312L470 512L676 712" fill="none" stroke="url(#c)" stroke-width="100" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
