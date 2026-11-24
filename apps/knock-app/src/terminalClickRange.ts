@@ -4,8 +4,13 @@ const PROMPT_ONLY_RE = /^\s*[$#>%❯➜→λ]+\s*$/u;
 const MULTILINE_CONTINUATION_RE = /^\s*(?:[-"'`~)}\]>{|&]|[([{,])/;
 
 export interface TerminalClickLine {
+  /** One character per cell, so string indexes are columns. */
   text: string;
   isWrapped: boolean;
+  /** Cell widths: 0 for the trailing half of a wide character. */
+  widths?: number[];
+  /** First column of autosuggestion (ghost) text, which is not input yet. */
+  ghostFrom?: number;
 }
 
 export interface TerminalClickBuffer {
@@ -51,19 +56,22 @@ function isMultilineContinuationText(lineText: string): boolean {
 function getEditableRowSegment(
   buffer: TerminalClickBuffer,
   row: number,
+  anchorCol?: number,
 ): EditableRowSegment | null {
   const line = getLine(buffer, row);
   if (!line) return null;
   const lineText = getLineText(buffer, row);
-  if (isPromptOnlyRowText(lineText)) {
+  if (anchorCol === undefined && isPromptOnlyRowText(lineText)) {
     return { row, promptCols: getLineTextEnd(lineText), editableCols: 0 };
   }
-  const promptCols = line.isWrapped ? 0 : getPromptCols(lineText);
+  const promptCols =
+    anchorCol !== undefined ? anchorCol : line.isWrapped ? 0 : getPromptCols(lineText);
   const nextLine = getLine(buffer, row + 1);
-  const editableCols = nextLine?.isWrapped
-    ? Math.max(0, buffer.cols - promptCols)
-    : Math.max(0, lineText.trimEnd().length - promptCols);
-  return { row, promptCols, editableCols };
+  let end = nextLine?.isWrapped ? buffer.cols : lineText.trimEnd().length;
+  // Trailing spaces the user typed are input too, even though they look blank.
+  if (row === buffer.cursorRow) end = Math.max(end, buffer.cursorCol);
+  if (line.ghostFrom !== undefined) end = Math.min(end, line.ghostFrom);
+  return { row, promptCols, editableCols: Math.max(0, end - promptCols) };
 }
 
 function isContinuationRow(buffer: TerminalClickBuffer, row: number): boolean {
@@ -86,21 +94,42 @@ function shouldAttachToPreviousRow(buffer: TerminalClickBuffer, row: number): bo
   );
 }
 
-export function collectEditableSegments(buffer: TerminalClickBuffer): EditableRowSegment[] {
+/**
+ * Rows of the command line being edited.
+ *
+ * With shell integration `anchor` is the exact input start (OSC 133;B), so the
+ * prompt is never guessed from its text. Without it the prompt and the start
+ * of a multi-line command are inferred from the cursor row.
+ */
+export function collectEditableSegments(
+  buffer: TerminalClickBuffer,
+  anchor?: { row: number; col: number },
+): EditableRowSegment[] {
   let startRow = buffer.cursorRow;
-  while (startRow > 0 && shouldAttachToPreviousRow(buffer, startRow)) {
-    startRow -= 1;
+  if (anchor) {
+    startRow = anchor.row;
+  } else {
+    while (startRow > 0 && shouldAttachToPreviousRow(buffer, startRow)) {
+      startRow -= 1;
+    }
   }
   const segments: EditableRowSegment[] = [];
   let row = startRow;
   while (row < buffer.length) {
-    const segment = getEditableRowSegment(buffer, row);
+    const segment = getEditableRowSegment(
+      buffer,
+      row,
+      anchor && row === anchor.row ? anchor.col : undefined,
+    );
     if (!segment) break;
     segments.push(segment);
+    // Everything after autosuggestion text is suggestion too.
+    if (getLine(buffer, row)?.ghostFrom !== undefined) break;
     const nextRow = row + 1;
     if (nextRow >= buffer.length) break;
     if (
-      isPromptOnlyRowText(getLineText(buffer, row).trimEnd()) ||
+      (anchor && nextRow <= buffer.cursorRow) ||
+      (!(anchor && row === anchor.row) && isPromptOnlyRowText(getLineText(buffer, row).trimEnd())) ||
       shouldAttachToPreviousRow(buffer, nextRow)
     ) {
       row += 1;
@@ -125,6 +154,72 @@ export function getSegmentOffset(
     offset += segment.editableCols;
   }
   return null;
+}
+
+/**
+ * Number of arrow-key presses that move the cursor between two offsets.
+ *
+ * Offsets count cells, but the shell moves by characters: a wide character
+ * (CJK, emoji) spans two cells and takes a single press.
+ */
+export function arrowPressesBetween(
+  buffer: TerminalClickBuffer,
+  segments: EditableRowSegment[],
+  fromOffset: number,
+  toOffset: number,
+): number {
+  const lo = Math.min(fromOffset, toOffset);
+  const hi = Math.max(fromOffset, toOffset);
+  let offset = 0;
+  let presses = 0;
+  for (const seg of segments) {
+    const widths = getLine(buffer, seg.row)?.widths;
+    for (let i = 0; i < seg.editableCols; i++, offset++) {
+      if (offset < lo) continue;
+      if (offset >= hi) return presses;
+      const w = widths ? widths[seg.promptCols + i] : 1;
+      if (w === undefined || w > 0) presses++;
+    }
+  }
+  // Positions past the known cells (cursor beyond trailing spaces).
+  return presses + Math.max(0, hi - Math.max(lo, offset));
+}
+
+/**
+ * Column for a pointer x coordinate: the gap between cells nearest to the
+ * pointer, the way text editors place a caret. Clicking the right half of a
+ * character puts the cursor after it.
+ */
+export function columnAtPixel(x: number, left: number, cellWidth: number, cols: number): number {
+  if (!(cellWidth > 0)) return 0;
+  const col = Math.round((x - left) / cellWidth);
+  return Math.max(0, Math.min(cols, col));
+}
+
+export interface GhostCell {
+  /** The cell holds a character (not blank). */
+  filled: boolean;
+  /** Foreground identity, e.g. "p8" or "rgb:666666"; equal for the same style. */
+  fg: string;
+  /** Dim/faint attribute, or a grey foreground typical of suggestions. */
+  faint: boolean;
+}
+
+/**
+ * Where autosuggestion text starts on the cursor row, if any.
+ *
+ * zsh-autosuggestions and fish draw the suggested rest of the command after
+ * the cursor in a faint color. It is not part of the input: a click there
+ * would send → presses that accept the suggestion instead of moving.
+ */
+export function findGhostStart(cells: GhostCell[], cursorCol: number): number | null {
+  const first = cells[cursorCol];
+  if (!first || !first.filled || !first.faint) return null;
+  for (let c = cursorCol; c < cells.length; c++) {
+    const cell = cells[c];
+    if (cell.filled && (!cell.faint || cell.fg !== first.fg)) return null;
+  }
+  return cursorCol;
 }
 
 /**

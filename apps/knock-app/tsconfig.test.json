@@ -9,5 +9,5 @@
     "rootDir": ".",
     "noEmit": false
   },
-  "include": ["src/terminalClickRange.ts", "src/terminalInput.ts", "src/terminalLayout.ts", "src/stargazers.ts", "src/security/*.ts"]
+  "include": ["src/terminalClickRange.ts", "src/terminalBlocks.ts", "src/terminalInput.ts", "src/terminalLayout.ts", "src/stargazers.ts", "src/security/*.ts"]
 }

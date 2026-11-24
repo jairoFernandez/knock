@@ -4,6 +4,7 @@ mod kubeconfig_cmd;
 mod mock_cmd;
 mod openapi_cmd;
 mod recents;
+mod shell_integration;
 mod terminal_cmd;
 mod updates_cmd;
 

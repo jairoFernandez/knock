@@ -8,14 +8,17 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IBufferCell, type IMarker } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import {
+  arrowPressesBetween,
   CLICK_MOVE_DELAY_MS,
   collectEditableSegments,
+  columnAtPixel,
+  findGhostStart,
   getSegmentOffset,
   shouldMoveCursorForClick,
   shouldResizePty,
@@ -38,6 +41,13 @@ import {
   setRatio,
   type Pane,
 } from "./terminalLayout";
+import {
+  BlockTracker,
+  blockBadge,
+  parseOsc133,
+  textBetween,
+  type Block,
+} from "./terminalBlocks";
 
 export { collectLeaves, type Pane };
 
@@ -159,7 +169,18 @@ export interface TerminalEntry {
   initialPassphrase: string | null;
   /** Deferred click-to-move, cancelled by a follow-up click (double-click). */
   clickTimer: number | null;
+  /** Command blocks from OSC 133 shell-integration marks. */
+  blocks: BlockTracker<IMarker>;
+  /** Overlay that draws block separators, status and selection. */
+  blockLayer: HTMLDivElement;
+  blockFrame: number | null;
+  selectedBlockId: number | null;
+  hoverBlockId: number | null;
 }
+
+export type BlockPart = "command" | "output" | "all";
+
+const lineOfMarker = (m: IMarker) => (m.isDisposed ? -1 : m.line);
 
 /** Distinct, dark-mode-friendly colors used to tag terminal sessions. */
 export const SESSION_COLORS = [
@@ -188,20 +209,72 @@ function getBufferRowFromViewport(term: Terminal, viewportRow: number): number {
   return term.buffer.active.viewportY + viewportRow;
 }
 
+function cellFg(cell: IBufferCell): string {
+  if (cell.isFgDefault()) return "d";
+  return `${cell.isFgPalette() ? "p" : "rgb"}${cell.getFgColor()}`;
+}
+
+/** Faint enough to be an autosuggestion (zsh-autosuggestions uses fg=8). */
+function isFaintCell(cell: IBufferCell): boolean {
+  if (cell.isDim()) return true;
+  if (cell.isFgPalette()) {
+    const c = cell.getFgColor();
+    return c === 8 || (c >= 238 && c <= 246);
+  }
+  if (cell.isFgRGB()) {
+    const v = cell.getFgColor();
+    const r = (v >> 16) & 255;
+    const g = (v >> 8) & 255;
+    const b = v & 255;
+    const hi = Math.max(r, g, b);
+    return hi - Math.min(r, g, b) < 24 && hi >= 70 && hi <= 170;
+  }
+  return false;
+}
+
 function getClickBuffer(term: Terminal): TerminalClickBuffer {
   const buf = term.buffer.active;
+  const cursorRow = buf.baseY + buf.cursorY;
+  const cursorCol = buf.cursorX;
+  const cell = buf.getNullCell();
+  let ghostRow = -1;
   return {
     cols: term.cols,
-    cursorRow: buf.baseY + buf.cursorY,
-    cursorCol: buf.cursorX,
+    cursorRow,
+    cursorCol,
     length: buf.length,
     getLine(row) {
       const line = buf.getLine(row);
       if (!line) return null;
-      return {
-        text: line.translateToString(false, 0, term.cols),
-        isWrapped: line.isWrapped,
-      };
+      // One character per cell so string indexes are columns.
+      let text = "";
+      const widths: number[] = [];
+      const ghostCells = [];
+      for (let x = 0; x < term.cols; x++) {
+        const c = line.getCell(x, cell);
+        const w = c ? c.getWidth() : 1;
+        const chars = c ? c.getChars() : "";
+        widths.push(w);
+        text += w === 0 ? "_" : chars === "" ? " " : chars.length > 1 ? "x" : chars;
+        if (row >= cursorRow) {
+          ghostCells.push({
+            filled: chars !== "" && chars !== " ",
+            fg: c ? cellFg(c) : "d",
+            faint: c ? isFaintCell(c) : false,
+          });
+        }
+      }
+      let ghostFrom: number | undefined;
+      if (row === cursorRow) {
+        const g = findGhostStart(ghostCells, cursorCol);
+        if (g !== null) {
+          ghostFrom = g;
+          ghostRow = row;
+        }
+      } else if (ghostRow >= 0 && row === ghostRow + 1 && line.isWrapped) {
+        ghostFrom = 0;
+      }
+      return { text, isWrapped: line.isWrapped, widths, ghostFrom };
     },
   };
 }
@@ -395,7 +468,7 @@ class Store {
       fontFamily:
         "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace",
       fontSize: 13,
-      lineHeight: 1.2,
+      lineHeight: 1.3,
       theme: TERMINAL_THEME,
       cursorBlink: true,
       cursorStyle: "bar",
@@ -457,7 +530,13 @@ class Store {
       ptyRows: 0,
       initialPassphrase: args.passphrase,
       clickTimer: null,
+      blocks: new BlockTracker<IMarker>((m) => m.dispose()),
+      blockLayer: document.createElement("div"),
+      blockFrame: null,
+      selectedBlockId: null,
+      hoverBlockId: null,
     };
+    this.setupBlocks(entry);
 
     term.onData((d) => {
       if (shouldRestartOnInput(entry.exited, d)) {
@@ -477,11 +556,22 @@ class Store {
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type === "keydown" && entry.selectedBlockId !== null) {
+        if (ev.key === "Escape") {
+          this.selectBlock(entry, null);
+          return false;
+        }
+      }
       const action = getTerminalKeyAction(ev, {
         isMac: IS_MAC,
-        hasSelection: term.hasSelection(),
+        hasSelection: term.hasSelection() || entry.selectedBlockId !== null,
       });
-      if (!action) return true;
+      if (!action) {
+        if (ev.type === "keydown" && entry.selectedBlockId !== null && !ev.metaKey) {
+          this.selectBlock(entry, null);
+        }
+        return true;
+      }
       ev.preventDefault();
       this.runAction(entry.id, action);
       return false;
@@ -510,63 +600,270 @@ class Store {
       const dx = Math.abs(ev.clientX - start.x);
       const dy = Math.abs(ev.clientY - start.y);
       const buf = term.buffer.active;
-      if (
-        !shouldMoveCursorForClick({
-          viewportY: buf.viewportY,
-          baseY: buf.baseY,
-          lastWriteAt: entry.lastWriteAt,
-          now: Date.now(),
-          selectionLength: term.getSelection()?.length ?? 0,
-          dragDistance: Math.max(dx, dy),
-          clickCount: ev.detail,
-          modifier: ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey,
-          alternateBuffer: buf.type === "alternate",
-          mouseTracking: term.modes.mouseTrackingMode !== "none",
-        })
-      ) {
+      const plainClick =
+        Math.max(dx, dy) <= 3 &&
+        ev.detail <= 1 &&
+        !(ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) &&
+        buf.type !== "alternate" &&
+        term.modes.mouseTrackingMode === "none" &&
+        !term.hasSelection();
+      if (!plainClick) {
+        if (entry.selectedBlockId !== null) this.selectBlock(entry, null);
         return;
       }
+      const canMove = shouldMoveCursorForClick({
+        viewportY: buf.viewportY,
+        baseY: buf.baseY,
+        lastWriteAt: entry.lastWriteAt,
+        now: Date.now(),
+        selectionLength: 0,
+        dragDistance: Math.max(dx, dy),
+        clickCount: ev.detail,
+      });
       const clientX = ev.clientX;
       const clientY = ev.clientY;
       entry.clickTimer = window.setTimeout(() => {
         entry.clickTimer = null;
         // Re-check what may have changed while waiting for a second click.
-        if (term.hasSelection() || Date.now() - entry.lastWriteAt < 50) return;
+        if (term.hasSelection()) return;
+        // Clicking a finished command selects its block, like Warp.
+        const block = this.blockAtClient(entry, clientY);
+        if (block && block.state === "done") {
+          this.selectBlock(entry, entry.selectedBlockId === block.id ? null : block.id);
+          return;
+        }
+        if (entry.selectedBlockId !== null) this.selectBlock(entry, null);
+        if (!canMove || Date.now() - entry.lastWriteAt < 50) return;
         this.moveCursorToClick(entry, clientX, clientY);
       }, CLICK_MOVE_DELAY_MS);
+    });
+    container.addEventListener("mousemove", (ev) => {
+      if (!entry.blocks.active) return;
+      const id = this.blockAtClient(entry, ev.clientY)?.id ?? null;
+      if (id !== entry.hoverBlockId) {
+        entry.hoverBlockId = id;
+        this.scheduleBlockPaint(entry);
+      }
+    });
+    container.addEventListener("mouseleave", () => {
+      if (entry.hoverBlockId === null) return;
+      entry.hoverBlockId = null;
+      this.scheduleBlockPaint(entry);
     });
 
     this.terminals.set(id, entry);
     return entry;
   }
 
-  private moveCursorToClick(entry: TerminalEntry, clientX: number, clientY: number) {
+  private screenGeometry(entry: TerminalEntry) {
     const { term, container } = entry;
     const screen = container.querySelector(".xterm-screen") as HTMLElement | null;
-    const target = screen ?? container;
-    const rect = target.getBoundingClientRect();
-    const cellW = rect.width / Math.max(1, term.cols);
-    const cellH = rect.height / Math.max(1, term.rows);
-    const col = Math.floor((clientX - rect.left) / cellW);
+    const rect = (screen ?? container).getBoundingClientRect();
+    return {
+      rect,
+      cellW: rect.width / Math.max(1, term.cols),
+      cellH: rect.height / Math.max(1, term.rows),
+    };
+  }
+
+  private moveCursorToClick(entry: TerminalEntry, clientX: number, clientY: number) {
+    const { term } = entry;
+    const { rect, cellW, cellH } = this.screenGeometry(entry);
     const viewportRow = Math.floor((clientY - rect.top) / cellH);
-    if (col < 0 || viewportRow < 0 || col >= term.cols || viewportRow >= term.rows) return;
+    if (clientX < rect.left - cellW || viewportRow < 0 || viewportRow >= term.rows) return;
+    const col = columnAtPixel(clientX, rect.left, cellW, term.cols);
     const targetRow = getBufferRowFromViewport(term, viewportRow);
+    let anchor: { row: number; col: number } | undefined;
+    if (entry.blocks.active) {
+      // With shell integration the input start is exact; while a command is
+      // running there is no input line to move in.
+      const a = entry.blocks.inputAnchor(lineOfMarker);
+      if (!a) return;
+      anchor = a;
+    }
     const clickBuffer = getClickBuffer(term);
-    const segments = collectEditableSegments(clickBuffer);
+    const segments = collectEditableSegments(clickBuffer, anchor);
     if (segments.length === 0) return;
     const firstRow = segments[0]?.row ?? 0;
     const lastRow = segments[segments.length - 1]?.row ?? 0;
-    if (targetRow < firstRow || targetRow > lastRow) return;
-    const targetOffset = getSegmentOffset(segments, targetRow, col);
+    // Below the command (the empty rows under the prompt) means "the end".
+    const row = targetRow > lastRow && anchor ? lastRow : targetRow;
+    const atEnd = targetRow > lastRow && anchor !== undefined;
+    if (row < firstRow || row > lastRow) return;
+    const last = segments[segments.length - 1]!;
+    const targetOffset = atEnd
+      ? getSegmentOffset(segments, last.row, last.promptCols + last.editableCols)
+      : getSegmentOffset(segments, row, col);
     const cursorOffset = getSegmentOffset(segments, clickBuffer.cursorRow, clickBuffer.cursorCol);
     if (targetOffset === null || cursorOffset === null) return;
-    const delta = targetOffset - cursorOffset;
-    if (delta === 0) return;
-    const seq = delta > 0 ? "\x1b[C".repeat(delta) : "\x1b[D".repeat(-delta);
+    const presses = arrowPressesBetween(clickBuffer, segments, cursorOffset, targetOffset);
+    if (presses === 0) return;
+    const seq = (targetOffset > cursorOffset ? "\x1b[C" : "\x1b[D").repeat(presses);
     const sid = resolveInputTarget(entry);
     if (sid) {
       invoke("terminal_write", { sessionId: sid, data: seq }).catch(() => undefined);
     }
+  }
+
+  // ---------- command blocks ----------
+
+  private setupBlocks(entry: TerminalEntry) {
+    const { term, blockLayer } = entry;
+    blockLayer.className = "term-blocks";
+    blockLayer.hidden = true;
+    entry.container.querySelector(".xterm-screen")?.appendChild(blockLayer);
+    term.parser.registerOscHandler(133, (data) => {
+      const mark = parseOsc133(data);
+      const buf = term.buffer.active;
+      if (!mark || buf.type === "alternate") return true;
+      const marker = term.registerMarker(0);
+      if (!marker) return true;
+      entry.blocks.apply(mark, { at: marker, col: buf.cursorX }, Date.now());
+      this.scheduleBlockPaint(entry);
+      return true;
+    });
+    term.onRender(() => this.scheduleBlockPaint(entry));
+    term.onScroll(() => this.scheduleBlockPaint(entry));
+    term.buffer.onBufferChange(() => this.scheduleBlockPaint(entry));
+  }
+
+  private scheduleBlockPaint(entry: TerminalEntry) {
+    if (entry.blockFrame !== null || !entry.blocks.active) return;
+    entry.blockFrame = requestAnimationFrame(() => {
+      entry.blockFrame = null;
+      this.paintBlocks(entry);
+    });
+  }
+
+  private paintBlocks(entry: TerminalEntry) {
+    const { term, blocks, blockLayer } = entry;
+    const buf = term.buffer.active;
+    blocks.prune(lineOfMarker);
+    if (!blocks.active || buf.type === "alternate") {
+      blockLayer.hidden = true;
+      return;
+    }
+    blockLayer.hidden = false;
+    const cellH = blockLayer.clientHeight / Math.max(1, term.rows);
+    const top = buf.viewportY;
+    const bottom = top + term.rows;
+    const ranges = blocks.ranges(lineOfMarker, buf.baseY + buf.cursorY + 1);
+    const nodes: HTMLElement[] = [];
+    ranges.forEach((r, i) => {
+      if (r.end <= top || r.start >= bottom) return;
+      const b = r.block;
+      const el = document.createElement("div");
+      const failed = b.state === "done" && b.exitCode !== null && b.exitCode !== 0;
+      el.className = [
+        "term-block",
+        i === 0 ? "first" : "",
+        b.state,
+        failed ? "failed" : "",
+        b.id === entry.selectedBlockId ? "selected" : "",
+        b.id === entry.hoverBlockId && b.state === "done" ? "hover" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      el.style.top = `${(r.start - top) * cellH}px`;
+      el.style.height = `${(r.end - r.start) * cellH}px`;
+      const badge = b.state === "done" ? blockBadge(b) : null;
+      if (badge) {
+        const chip = document.createElement("span");
+        chip.className = `term-block-badge${badge.failed ? " failed" : ""}`;
+        chip.textContent = badge.text;
+        el.appendChild(chip);
+      }
+      nodes.push(el);
+    });
+    blockLayer.replaceChildren(...nodes);
+  }
+
+  private blockAtClient(entry: TerminalEntry, clientY: number): Block<IMarker> | null {
+    const { term, blocks } = entry;
+    const buf = term.buffer.active;
+    if (!blocks.active || buf.type === "alternate") return null;
+    const { rect, cellH } = this.screenGeometry(entry);
+    const viewportRow = Math.floor((clientY - rect.top) / cellH);
+    if (viewportRow < 0 || viewportRow >= term.rows) return null;
+    return blocks.blockAtLine(
+      buf.viewportY + viewportRow,
+      lineOfMarker,
+      buf.baseY + buf.cursorY + 1,
+    );
+  }
+
+  /** Block under a pointer position, for the context menu. */
+  blockIdAt(termId: string, clientY: number): number | null {
+    const entry = this.terminals.get(termId);
+    if (!entry) return null;
+    const b = this.blockAtClient(entry, clientY);
+    return b && b.state === "done" ? b.id : null;
+  }
+
+  private selectBlock(entry: TerminalEntry, id: number | null) {
+    if (entry.selectedBlockId === id) return;
+    entry.selectedBlockId = id;
+    if (id !== null) entry.term.clearSelection();
+    this.scheduleBlockPaint(entry);
+  }
+
+  /** Select the previous/next finished block and scroll it into view. */
+  private stepBlock(entry: TerminalEntry, dir: -1 | 1) {
+    const done = entry.blocks.finished();
+    if (done.length === 0) return;
+    const idx = done.findIndex((b) => b.id === entry.selectedBlockId);
+    let next: number;
+    if (idx < 0) next = dir < 0 ? done.length - 1 : -1;
+    else next = idx + dir;
+    if (next < 0 || next >= done.length) {
+      // Walking past the newest block returns to the prompt.
+      if (dir > 0) {
+        this.selectBlock(entry, null);
+        entry.term.scrollToBottom();
+      }
+      return;
+    }
+    const b = done[next]!;
+    this.selectBlock(entry, b.id);
+    const line = lineOfMarker(b.prompt);
+    const buf = entry.term.buffer.active;
+    if (line >= 0 && (line < buf.viewportY || line >= buf.viewportY + entry.term.rows)) {
+      entry.term.scrollToLine(Math.max(0, line - 1));
+    }
+  }
+
+  private blockText(entry: TerminalEntry, b: Block<IMarker>, part: BlockPart): string {
+    const buf = entry.term.buffer.active;
+    const cols = entry.term.cols;
+    const getRow = (row: number, startCol: number, endCol?: number) => {
+      const line = buf.getLine(row);
+      if (!line) return null;
+      return { text: line.translateToString(false, startCol, endCol ?? cols), isWrapped: line.isWrapped };
+    };
+    const pos = (p: { at: IMarker; col: number } | null) =>
+      p && !p.at.isDisposed ? { row: p.at.line, col: p.col } : null;
+    const promptRow = lineOfMarker(b.prompt);
+    const input = pos(b.input) ?? { row: promptRow, col: 0 };
+    const output = pos(b.output);
+    const end = pos(b.end) ?? { row: buf.baseY + buf.cursorY, col: 0 };
+    const command = textBetween(getRow, input, output ?? end).trim();
+    const out = output ? textBetween(getRow, output, end) : "";
+    if (part === "command") return command;
+    if (part === "output") return out;
+    return out ? `${command}\n${out}` : command;
+  }
+
+  async copyBlock(termId: string, blockId: number, part: BlockPart): Promise<boolean> {
+    const entry = this.terminals.get(termId);
+    const b = entry?.blocks.blocks.find((x) => x.id === blockId);
+    if (!entry || !b) return false;
+    try {
+      await navigator.clipboard.writeText(this.blockText(entry, b, part));
+    } catch {
+      return false;
+    }
+    entry.term.focus();
+    return true;
   }
 
   /** Run a keyboard/context-menu action against a pane. */
@@ -587,12 +884,22 @@ class Store {
       case "find":
         this.openFind(termId);
         break;
+      case "blockPrev":
+      case "blockNext": {
+        const entry = this.terminals.get(termId);
+        if (entry) this.stepBlock(entry, action === "blockPrev" ? -1 : 1);
+        break;
+      }
     }
   }
 
   async copySelection(termId: string): Promise<boolean> {
     const entry = this.terminals.get(termId);
-    if (!entry || !entry.term.hasSelection()) return false;
+    if (!entry) return false;
+    if (!entry.term.hasSelection()) {
+      if (entry.selectedBlockId === null) return false;
+      return this.copyBlock(termId, entry.selectedBlockId, "all");
+    }
     const text = cleanCopiedText(entry.term.getSelection());
     try {
       await navigator.clipboard.writeText(text);
@@ -626,6 +933,8 @@ class Store {
     if (entry.term.buffer.active.type === "alternate") return;
     entry.term.clear();
     entry.search.clearDecorations();
+    entry.selectedBlockId = null;
+    this.scheduleBlockPaint(entry);
     entry.term.focus();
   }
 
@@ -698,6 +1007,7 @@ class Store {
     entry.outputSeen = false;
     entry.exited = false;
     entry.initialPassphrase = null;
+    entry.selectedBlockId = null;
     // Soft reset (DECSTR): drops modes the dead process left on (mouse
     // tracking, hidden cursor, app keypad) but keeps its output readable.
     entry.term.write("\x1b[!p\r\n");
@@ -798,6 +1108,11 @@ class Store {
       window.clearTimeout(entry.clickTimer);
       entry.clickTimer = null;
     }
+    if (entry.blockFrame !== null) {
+      cancelAnimationFrame(entry.blockFrame);
+      entry.blockFrame = null;
+    }
+    entry.blocks.clear();
     if (entry.pendingFocus) {
       entry.pendingFocus();
       entry.pendingFocus = null;

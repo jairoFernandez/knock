@@ -36,7 +36,14 @@ export function shouldRestartOnInput(exited: boolean, data: string): boolean {
   return exited && (data === "\r" || data === "\n");
 }
 
-export type TerminalKeyAction = "copy" | "paste" | "selectAll" | "clear" | "find";
+export type TerminalKeyAction =
+  | "copy"
+  | "paste"
+  | "selectAll"
+  | "clear"
+  | "find"
+  | "blockPrev"
+  | "blockNext";
 
 export interface KeyLike {
   type: string;
@@ -56,6 +63,8 @@ export interface KeyLike {
  *
  * Elsewhere: Ctrl+Shift+C/V/F/K/A, and Ctrl+C copies only while text is
  * selected — otherwise it must still reach the shell as SIGINT.
+ *
+ * Cmd+↑/↓ (Ctrl+Shift+↑/↓ elsewhere) walks command blocks, like Warp.
  */
 export function getTerminalKeyAction(
   ev: KeyLike,
@@ -69,6 +78,8 @@ export function getTerminalKeyAction(
     if (key === "k") return "clear";
     if (key === "f") return "find";
     if (key === "a") return "selectAll";
+    if (key === "arrowup") return "blockPrev";
+    if (key === "arrowdown") return "blockNext";
     return null;
   }
   if (!ev.ctrlKey || ev.metaKey) return null;
@@ -78,6 +89,8 @@ export function getTerminalKeyAction(
     if (key === "f") return "find";
     if (key === "k") return "clear";
     if (key === "a") return "selectAll";
+    if (key === "arrowup") return "blockPrev";
+    if (key === "arrowdown") return "blockNext";
     return null;
   }
   if (key === "c" && opts.hasSelection) return "copy";

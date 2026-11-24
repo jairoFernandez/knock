@@ -247,3 +247,106 @@ test("suppresses a non-finite measurement", () => {
   assert.equal(shouldResizePty(makeResizeState({ cols: NaN })), false);
   assert.equal(shouldResizePty(makeResizeState({ rows: Infinity })), false);
 });
+
+import {
+  arrowPressesBetween,
+  columnAtPixel,
+  findGhostStart,
+} from "../.test-dist/src/terminalClickRange.js";
+
+test("an integration anchor replaces prompt guessing", () => {
+  // A prompt the regexes cannot recognise: "~/knock main ✗ ".
+  const buffer = makeBuffer({
+    cols: 40,
+    cursorRow: 0,
+    cursorCol: 22,
+    lines: [{ text: "~/knock main x git st", isWrapped: false }],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 15 });
+  assert.deepEqual(segments, [{ row: 0, promptCols: 15, editableCols: 7 }]);
+  // Clicking inside the prompt clamps to the input start.
+  assert.equal(getSegmentOffset(segments, 0, 3), 0);
+});
+
+test("an anchor spans a multi-line prompt down to the cursor", () => {
+  const buffer = makeBuffer({
+    cols: 10,
+    cursorRow: 2,
+    cursorCol: 3,
+    lines: [
+      { text: "$ abcdefgh", isWrapped: false },
+      { text: "ijklmnopqr", isWrapped: true },
+      { text: "stu       ", isWrapped: true },
+    ],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 2 });
+  assert.deepEqual(segments.map((s) => s.editableCols), [8, 10, 3]);
+});
+
+test("trailing typed spaces count as input", () => {
+  const buffer = makeBuffer({
+    cols: 20,
+    cursorRow: 0,
+    cursorCol: 5,
+    lines: [{ text: "$ ls ", isWrapped: false }],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 2 });
+  assert.equal(getSegmentOffset(segments, 0, 5), 3);
+  assert.equal(getSegmentOffset(segments, 0, 2), 0);
+});
+
+test("autosuggestion text is not clickable", () => {
+  const buffer = makeBuffer({
+    cols: 30,
+    cursorRow: 0,
+    cursorCol: 4,
+    lines: [{ text: "$ gitstatus --short", isWrapped: false, ghostFrom: 5 }],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 2 });
+  assert.deepEqual(segments, [{ row: 0, promptCols: 2, editableCols: 3 }]);
+});
+
+test("wide characters take one arrow press", () => {
+  // "$ a日b": 日 spans columns 3-4.
+  const buffer = makeBuffer({
+    cols: 20,
+    cursorRow: 0,
+    cursorCol: 6,
+    lines: [{ text: "$ a日_b", isWrapped: false, widths: [1, 1, 1, 2, 0, 1] }],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 2 });
+  const cursor = getSegmentOffset(segments, 0, 6);
+  assert.equal(arrowPressesBetween(buffer, segments, cursor, getSegmentOffset(segments, 0, 2)), 3);
+  assert.equal(arrowPressesBetween(buffer, segments, cursor, getSegmentOffset(segments, 0, 5)), 1);
+  assert.equal(arrowPressesBetween(buffer, segments, 0, 1), 1);
+});
+
+test("arrow presses fall back to one per cell without widths", () => {
+  const buffer = makeBuffer({
+    cols: 20,
+    cursorRow: 0,
+    cursorCol: 6,
+    lines: [{ text: "$ abcd", isWrapped: false }],
+  });
+  const segments = collectEditableSegments(buffer, { row: 0, col: 2 });
+  assert.equal(arrowPressesBetween(buffer, segments, 4, 1), 3);
+});
+
+test("clicks snap to the nearest gap between cells", () => {
+  assert.equal(columnAtPixel(10 + 8 * 3 + 3, 10, 8, 80), 3);
+  assert.equal(columnAtPixel(10 + 8 * 3 + 5, 10, 8, 80), 4);
+  assert.equal(columnAtPixel(0, 10, 8, 80), 0);
+  assert.equal(columnAtPixel(10000, 10, 8, 80), 80);
+  assert.equal(columnAtPixel(50, 10, 0, 80), 0);
+});
+
+test("finds the start of faint suggestion text after the cursor", () => {
+  const typed = { filled: true, fg: "default", faint: false };
+  const ghost = { filled: true, fg: "p8", faint: true };
+  const blank = { filled: false, fg: "default", faint: false };
+  assert.equal(findGhostStart([typed, typed, ghost, ghost, blank], 2), 2);
+  assert.equal(findGhostStart([typed, typed, blank], 2), null);
+  // Faint text followed by normal text is regular highlighting.
+  assert.equal(findGhostStart([typed, ghost, typed], 1), null);
+  assert.equal(findGhostStart([typed, ghost, { ...ghost, fg: "p7" }], 1), null);
+});

@@ -5,7 +5,6 @@ import { useColumnDrag } from "./hooks";
 import { KubeTerminalsPane } from "./KubeTerminalsPane";
 import { TermIcon } from "./terminalIcons";
 import {
-  IS_MAC,
   listShells,
   shortcutLabel,
   terminalStore,
@@ -239,29 +238,6 @@ export function BottomTerminalDock({
                   }}
                 >
                   <TermIcon name="splitDown" />
-                </button>
-                <button
-                  className="bottom-terminal-icon"
-                  title={`Find in terminal (${shortcutLabel("f", { shift: !IS_MAC })})`}
-                  aria-label="Find in terminal"
-                  onClick={() => {
-                    const id = terminalStore.getActiveTab()?.activeLeaf;
-                    if (id) terminalStore.openFind(id);
-                    onExpandedChange(true);
-                  }}
-                >
-                  <TermIcon name="search" />
-                </button>
-                <button
-                  className="bottom-terminal-icon"
-                  title={`Reset input modes — fixes pasting after a process left bracketed paste on (${shortcutLabel("r", { shift: true })})`}
-                  aria-label="Reset input modes"
-                  onClick={() => {
-                    terminalStore.resetInputModes();
-                    onExpandedChange(true);
-                  }}
-                >
-                  <TermIcon name="reset" />
                 </button>
               </>
             )}

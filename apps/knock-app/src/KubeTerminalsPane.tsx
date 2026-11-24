@@ -48,7 +48,9 @@ function LeafView({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const entry = terminalStore.terminals.get(termId);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; blockId: number | null } | null>(
+    null,
+  );
 
   // Attach the persistent xterm container DOM element here. React never
   // owns the xterm DOM — just the wrapper.
@@ -99,7 +101,7 @@ function LeafView({
         if ((e.target as HTMLElement).closest(".term-find, .kube-leaf-header input")) return;
         e.preventDefault();
         terminalStore.setLeafActive(tabId, termId);
-        setMenu({ x: e.clientX, y: e.clientY });
+        setMenu({ x: e.clientX, y: e.clientY, blockId: terminalStore.blockIdAt(termId, e.clientY) });
       }}
     >
       {multi && <LeafHeader entry={entry} tabId={tabId} />}
@@ -111,6 +113,7 @@ function LeafView({
         <TerminalContextMenu
           x={menu.x}
           y={menu.y}
+          blockId={menu.blockId}
           entry={entry}
           tabId={tabId}
           onClose={() => setMenu(null)}
@@ -217,12 +220,14 @@ type MenuItem =
 function TerminalContextMenu({
   x,
   y,
+  blockId,
   entry,
   tabId,
   onClose,
 }: {
   x: number;
   y: number;
+  blockId: number | null;
   entry: TerminalEntry;
   tabId: string;
   onClose: () => void;
@@ -264,7 +269,29 @@ function TerminalContextMenu({
   }, [onClose]);
 
   const id = entry.id;
+  const blockItems: MenuItem[] =
+    blockId === null
+      ? []
+      : [
+          {
+            kind: "item",
+            label: "Copy command",
+            run: () => void terminalStore.copyBlock(id, blockId, "command"),
+          },
+          {
+            kind: "item",
+            label: "Copy output",
+            run: () => void terminalStore.copyBlock(id, blockId, "output"),
+          },
+          {
+            kind: "item",
+            label: "Copy command and output",
+            run: () => void terminalStore.copyBlock(id, blockId, "all"),
+          },
+          { kind: "sep" },
+        ];
   const items: MenuItem[] = [
+    ...blockItems,
     {
       kind: "item",
       label: "Copy",

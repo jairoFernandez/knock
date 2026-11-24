@@ -147,3 +147,15 @@ test("only http(s) links are openable", () => {
   assert.equal(isOpenableUrl("file:///etc/passwd"), false);
   assert.equal(isOpenableUrl("javascript:alert(1)"), false);
 });
+
+test("Cmd+↑/↓ (Ctrl+Shift+↑/↓ elsewhere) walks command blocks", () => {
+  assert.equal(getTerminalKeyAction(key("ArrowUp", { metaKey: true }), mac()), "blockPrev");
+  assert.equal(getTerminalKeyAction(key("ArrowDown", { metaKey: true }), mac()), "blockNext");
+  assert.equal(
+    getTerminalKeyAction(key("ArrowUp", { ctrlKey: true, shiftKey: true }), pc()),
+    "blockPrev",
+  );
+  // Plain arrows and Ctrl+↑ still belong to the shell.
+  assert.equal(getTerminalKeyAction(key("ArrowUp"), mac()), null);
+  assert.equal(getTerminalKeyAction(key("ArrowUp", { ctrlKey: true }), pc()), null);
+});

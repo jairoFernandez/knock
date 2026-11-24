@@ -811,10 +811,24 @@ pub async fn terminal_spawn(
                 .filter(|s| !s.is_empty() && s != "auto")
         })
         .unwrap_or_else(|| "auto".to_string());
-    let (program, args) = shell_command(&shell_id);
+    let (program, mut args) = shell_command(&shell_id);
+    let mut integration_env: Vec<(String, String)> = Vec::new();
+    // Best effort: a shell without the shims still works, just without blocks.
+    if let Some(dir) = crate::shell_integration::integration_dir() {
+        if crate::shell_integration::install(&dir).is_ok() {
+            let user_zdotdir = std::env::var("ZDOTDIR").ok();
+            let launch =
+                crate::shell_integration::prepare(&program, args, &dir, user_zdotdir.as_deref());
+            args = launch.args;
+            integration_env = launch.env;
+        }
+    }
     let mut cmd = CommandBuilder::new(&program);
     for a in &args {
         cmd.arg(a);
+    }
+    for (k, v) in &integration_env {
+        cmd.env(k, v);
     }
     if let Some(kubeconfig_path) = kubeconfig_path {
         cmd.env("KUBECONFIG", &kubeconfig_path);

@@ -1748,7 +1748,52 @@ button.danger:hover:not(:disabled) {
 }
 /* Breathing room around the grid; FitAddon subtracts this padding. */
 .kube-xterm .xterm {
-  padding: 8px 4px 6px 12px;
+  padding: 10px 6px 8px 16px;
+}
+/* Own stacking context so the block layer can sit behind the text rows. */
+.kube-xterm .xterm-screen { z-index: 0; }
+
+/* Command blocks (OSC 133), drawn behind the text. */
+.term-blocks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+.term-block {
+  position: absolute;
+  left: -16px;
+  right: -6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  transition: background 120ms ease;
+}
+.term-block.first { border-top-color: transparent; }
+.term-block.running { box-shadow: inset 2px 0 0 rgba(122, 162, 255, 0.55); }
+.term-block.hover { background: rgba(255, 255, 255, 0.025); }
+.term-block.failed {
+  background: rgba(255, 99, 99, 0.05);
+  box-shadow: inset 2px 0 0 rgba(255, 107, 107, 0.8);
+}
+.term-block.selected {
+  background: rgba(122, 162, 255, 0.09);
+  box-shadow: inset 2px 0 0 var(--term-accent);
+  border-top-color: rgba(122, 162, 255, 0.35);
+}
+.term-block-badge {
+  position: absolute;
+  top: 4px;
+  right: 14px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font: 500 10.5px/16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--term-dim);
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.8;
+}
+.term-block-badge.failed {
+  color: #ff9b9b;
+  background: rgba(255, 107, 107, 0.12);
+  opacity: 1;
 }
 .kube-xterm .xterm-viewport {
   background-color: var(--term-bg) !important;
@@ -1894,51 +1939,47 @@ button.danger:hover:not(:disabled) {
   background: var(--term-bg);
   --leaf-color: #4a90e2;
 }
-.kube-leaf.multi {
-  margin: 4px;
-  border: 1px solid var(--term-line);
-  border-radius: var(--term-radius);
-  overflow: hidden;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
-}
-/* Active pane: thin accent ring in the pane's color; others recede. */
-.kube-leaf.multi.active {
-  border-color: color-mix(in srgb, var(--leaf-color) 70%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--leaf-color) 25%, transparent);
-}
+/* Panes sit flush, split by a hairline; the inactive ones recede (Warp). */
+.kube-leaf.multi { overflow: hidden; }
 .kube-leaf.multi:not(.active) .kube-leaf-body {
-  opacity: 0.62;
+  opacity: 0.55;
   transition: opacity 140ms ease;
 }
-.kube-leaf.multi:not(.active):hover .kube-leaf-body { opacity: 0.82; }
+.kube-leaf.multi:not(.active):hover .kube-leaf-body { opacity: 0.75; }
 .kube-leaf-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   position: relative;
 }
+/* Pane controls float over the pane and only show on hover. */
 .kube-leaf-header {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 4;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 4px 0 10px;
-  height: 28px;
-  flex: 0 0 auto;
-  background: rgba(255,255,255,0.02);
-  border-bottom: 1px solid var(--term-line);
-  position: relative;
-  color: var(--term-dim);
-}
-.kube-leaf.active .kube-leaf-header { color: var(--term-text); }
-.kube-leaf-header .kube-leaf-actions {
+  gap: 6px;
+  height: 26px;
+  padding: 0 3px 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--term-line-strong);
+  background: rgba(16, 18, 23, 0.94);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  color: var(--term-text);
   opacity: 0;
-  transition: opacity 120ms ease;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
 }
-.kube-leaf.active .kube-leaf-header .kube-leaf-actions { opacity: 0.55; }
-.kube-leaf-header:hover .kube-leaf-actions,
-.kube-leaf-header .kube-leaf-actions:focus-within {
-  opacity: 1 !important;
+.kube-leaf.multi:hover .kube-leaf-header,
+.kube-leaf-header:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
 }
+.kube-leaf-header .kube-leaf-tag { display: none; }
 .kube-leaf-dot {
   width: 9px;
   height: 9px;
@@ -2189,10 +2230,10 @@ button.danger:hover:not(:disabled) {
   background: transparent;
   transition: background 120ms ease;
 }
-.kube-split-handle.h { width: 4px; margin: 0 -2px; cursor: col-resize; z-index: 2; }
-.kube-split-handle.v { height: 4px; margin: -2px 0; cursor: row-resize; z-index: 2; }
-.kube-split-handle.h::after { top: 8px; bottom: 8px; left: 1px; width: 2px; }
-.kube-split-handle.v::after { left: 8px; right: 8px; top: 1px; height: 2px; }
+.kube-split-handle.h { width: 5px; margin: 0 -2px; cursor: col-resize; z-index: 2; }
+.kube-split-handle.v { height: 5px; margin: -2px 0; cursor: row-resize; z-index: 2; }
+.kube-split-handle.h::after { top: 0; bottom: 0; left: 2px; width: 1px; background: var(--term-line-strong); }
+.kube-split-handle.v::after { left: 0; right: 0; top: 2px; height: 1px; background: var(--term-line-strong); }
 .kube-split-handle:hover::after { background: var(--term-accent); }
 
 /* ---------- bottom terminal dock ---------- */
