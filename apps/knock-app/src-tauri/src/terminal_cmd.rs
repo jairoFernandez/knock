@@ -730,11 +730,11 @@ const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(8);
 /// Whether the reader thread should emit its buffer now. Emits once the buffer
 /// is large or the oldest buffered byte has waited long enough; never emits an
 /// empty buffer (that would spam no-op events while the PTY is idle).
-fn should_flush(pending_len: usize, since_last_flush: std::time::Duration) -> bool {
+fn should_flush(pending_len: usize, since_oldest: std::time::Duration) -> bool {
     if pending_len == 0 {
         return false;
     }
-    pending_len >= FLUSH_BYTES || since_last_flush >= FLUSH_INTERVAL
+    pending_len >= FLUSH_BYTES || since_oldest >= FLUSH_INTERVAL
 }
 
 // Terminal commands are async so they run on Tauri's async runtime instead of
@@ -867,24 +867,21 @@ pub async fn terminal_spawn(
     let app_for_reader = app.clone();
     let id_for_reader = session_id.clone();
     let sessions_for_reader = sessions.map.clone();
+    // Coalesce PTY output before crossing the Tauri IPC boundary. A chatty
+    // process (dev server logs, `bun run`) produces thousands of small reads
+    // per second; emitting one event each saturates the event channel, which
+    // stalls the webview and makes keystrokes (Ctrl-C included) land late.
+    // The reader blocks on the PTY, so the timed flush lives in its own thread:
+    // otherwise the last chunk (a prompt) waits for the next read to go out.
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
-        // Coalesce PTY output before crossing the Tauri IPC boundary. A chatty
-        // process (dev server logs, `bun run`) produces thousands of small reads
-        // per second; emitting one event each saturates the event channel, which
-        // stalls the webview and makes keystrokes (Ctrl-C included) land late.
-        let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
-        let mut last_flush = std::time::Instant::now();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF: PTY closed, process tree exited
                 Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    if should_flush(pending.len(), last_flush.elapsed()) {
-                        let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
-                        let _ = app_for_reader.emit(&event_name, chunk);
-                        pending.clear();
-                        last_flush = std::time::Instant::now();
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
                     }
                 }
                 // Transient errors must NOT kill the stream. On Windows ConPTY a
@@ -894,14 +891,6 @@ pub async fn terminal_spawn(
                 Err(e) => match e.kind() {
                     std::io::ErrorKind::Interrupted => continue,
                     std::io::ErrorKind::WouldBlock => {
-                        // Reader is blocking by default; if the OS ever returns
-                        // this, flush what we have and sleep to avoid a busy spin.
-                        if !pending.is_empty() {
-                            let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
-                            let _ = app_for_reader.emit(&event_name, chunk);
-                            pending.clear();
-                            last_flush = std::time::Instant::now();
-                        }
                         std::thread::sleep(std::time::Duration::from_millis(5));
                         continue;
                     }
@@ -915,11 +904,46 @@ pub async fn terminal_spawn(
                 },
             }
         }
-        // Never drop the tail: whatever the process wrote just before exiting
-        // must reach the emulator before the exit event.
-        if !pending.is_empty() {
-            let chunk = base64::engine::general_purpose::STANDARD.encode(&pending);
+    });
+
+    std::thread::spawn(move || {
+        let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
+        let mut oldest = std::time::Instant::now();
+        let emit = |pending: &mut Vec<u8>| {
+            let chunk = base64::engine::general_purpose::STANDARD.encode(&*pending);
             let _ = app_for_reader.emit(&event_name, chunk);
+            pending.clear();
+        };
+        loop {
+            let wait = if pending.is_empty() {
+                std::time::Duration::from_secs(3600)
+            } else {
+                FLUSH_INTERVAL.saturating_sub(oldest.elapsed())
+            };
+            match rx.recv_timeout(wait) {
+                Ok(data) => {
+                    if pending.is_empty() {
+                        oldest = std::time::Instant::now();
+                    }
+                    pending.extend_from_slice(&data);
+                    if should_flush(pending.len(), oldest.elapsed()) {
+                        emit(&mut pending);
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if !pending.is_empty() {
+                        emit(&mut pending);
+                    }
+                }
+                // Never drop the tail: whatever the process wrote just before
+                // exiting must reach the emulator before the exit event.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    if !pending.is_empty() {
+                        emit(&mut pending);
+                    }
+                    break;
+                }
+            }
         }
         let _ = app_for_reader.emit(&exit_event, ());
         if let Ok(mut m) = sessions_for_reader.lock() {
