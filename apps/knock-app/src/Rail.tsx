@@ -1,5 +1,5 @@
-export type GlobalRailMode = "requests" | "kube";
-export type ProjectRailMode = "workspace" | "files" | "git" | "mock";
+export type GlobalRailMode = "requests" | "kube" | "notes";
+export type ProjectRailMode = "workspace" | "files" | "git" | "mock" | "notes";
 
 // Kept for backward compat; some legacy code may import it.
 export type RailMode = GlobalRailMode | ProjectRailMode;
@@ -58,9 +58,23 @@ const GIT_ICON = (
   </svg>
 );
 
+const NOTES_ICON = (
+  <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+    <path
+      d="M5 3.5h7l3 3v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+      fill="none"
+    />
+    <path d="M7 9.5h6M7 12.5h6M7 6.5h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
+
 const GLOBAL_ITEMS: { mode: GlobalRailMode; label: string; icon: JSX.Element }[] = [
   { mode: "requests", label: "Requests", icon: REQUESTS_ICON },
   { mode: "kube", label: "Kubeconfigs", icon: KUBE_ICON },
+  { mode: "notes", label: "Notes", icon: NOTES_ICON },
 ];
 
 const MOCK_ICON = (
@@ -76,6 +90,7 @@ const PROJECT_ITEMS: { mode: ProjectRailMode; label: string; icon: JSX.Element }
   { mode: "files", label: "Files", icon: FILES_ICON },
   { mode: "git", label: "Git", icon: GIT_ICON },
   { mode: "mock", label: "Mock server", icon: MOCK_ICON },
+  { mode: "notes", label: "Notes", icon: NOTES_ICON },
 ];
 
 interface GlobalProps {

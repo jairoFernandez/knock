@@ -18,6 +18,7 @@ import {
 import { FileBrowser } from "./FileBrowser";
 import { GitPanel } from "./GitPanel";
 import { KubeconfigsView } from "./KubeconfigsView";
+import { NotesView } from "./NotesView";
 import { WindowControls, detectIsMac } from "./WindowControls";
 import { Splitter } from "./Splitter";
 import { usePersistedNumber, usePersistedString, useConfirm } from "./hooks";
@@ -662,6 +663,8 @@ export function App() {
               setTerminalDockExpanded(true);
             }}
           />
+        ) : globalMode === "notes" ? (
+          <NotesView workspaceRoot={null} confirm={confirm} />
         ) : (
           <Dashboard
             onOpen={(root) => openWorkspaceAt(root, "primary")}
@@ -740,11 +743,14 @@ export function App() {
 
   const toolsCols = activeTool ? ` 4px ${toolsWidth}px 36px` : ` 36px`;
   const isMockMode = globalMode === "requests" && projectMode === "mock";
+  const isNotesMode = globalMode === "requests" && projectMode === "notes";
   const appStyle: React.CSSProperties = {
     gridTemplateColumns:
       globalMode === "kube"
         ? `minmax(0, 1fr)${toolsCols}`
-        : isMockMode
+        : isNotesMode
+          ? `44px minmax(0, 1fr)${toolsCols}`
+          : isMockMode
           ? `44px minmax(320px, 1fr) 4px minmax(0, ${responseWidth}px)${toolsCols}`
           : `44px ${sidebarWidth}px 4px minmax(360px, 1fr) 4px minmax(0, ${responseWidth}px)${toolsCols}`,
   };
@@ -959,7 +965,7 @@ export function App() {
         <ProjectRail mode={projectMode} onChange={setProjectMode} />
       )}
 
-      {!isMockMode && (<>
+      {!isMockMode && !isNotesMode && (<>
       <div className="panel sidebar">
         {projectMode === "workspace" && globalMode === "requests" && (
           <>
@@ -1250,6 +1256,13 @@ export function App() {
       />
       </>)}
 
+      {isNotesMode && (
+        <div className="panel notes-panel">
+          <NotesView workspaceRoot={workspace.root} workspaceName={workspace.name ?? undefined} confirm={confirm} />
+        </div>
+      )}
+
+      {!isNotesMode && (
       <div className="panel editor-panel">
         {globalMode === "kube" && (
           <KubeconfigsView
@@ -1313,14 +1326,15 @@ export function App() {
           </>
         )}
       </div>
+      )}
 
-      {globalMode === "requests" && (
+      {globalMode === "requests" && !isNotesMode && (
         <Splitter
           onDelta={(d) => setResponseWidth(clampWidth(responseWidth - d, 240, 1200))}
         />
       )}
 
-      {globalMode === "requests" && (
+      {globalMode === "requests" && !isNotesMode && (
       <div className="panel response-panel">
         <div className="panel-header">Response</div>
         {error && <div className="error">{error}</div>}

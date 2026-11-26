@@ -1,12 +1,14 @@
 pub mod agents;
 pub mod author;
 pub mod catalog;
+pub mod crypto;
 pub mod curl;
 pub mod flow;
 pub mod fmt;
 pub mod history;
 pub mod kubeconfigs;
 pub mod model;
+pub mod notes;
 pub mod openapi;
 pub mod parser;
 pub mod redact;

@@ -2,6 +2,7 @@ mod agents_cmd;
 pub mod commands;
 mod kubeconfig_cmd;
 mod mock_cmd;
+mod notes_cmd;
 mod openapi_cmd;
 mod recents;
 mod shell_integration;
@@ -127,6 +128,12 @@ pub fn run() {
             mock_cmd::mock_render_preview,
             mock_cmd::mock_render_template,
             mock_cmd::mock_create_endpoint,
+            notes_cmd::notes_list,
+            notes_cmd::notes_read,
+            notes_cmd::notes_create,
+            notes_cmd::notes_save,
+            notes_cmd::notes_rename,
+            notes_cmd::notes_remove,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

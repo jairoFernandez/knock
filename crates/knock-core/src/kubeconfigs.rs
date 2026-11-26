@@ -1,20 +1,14 @@
-use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
-use argon2::{Algorithm, Argon2, Params, Version};
+use crate::crypto::{self, CryptoError};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use rand::RngCore;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use zeroize::Zeroize;
 
 const MAGIC: &[u8; 4] = b"KKC1";
 const VERSION: u8 = 1;
-const SALT_LEN: usize = 16;
-const NONCE_LEN: usize = 12;
-const KEY_LEN: usize = 32;
 const NAME_RE: &str = r"^[A-Za-z0-9._-]{1,64}$";
 const PROJECT_RE: &str = r"^[A-Za-z0-9._-]{1,64}$";
 pub const DEFAULT_PROJECT: &str = "default";
@@ -165,44 +159,18 @@ fn find_entry(dir: &Path, project: &str, name: &str) -> Result<(PathBuf, bool), 
     Err(KubeError::NotFound(name.to_string(), project.to_string()))
 }
 
-fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<[u8; KEY_LEN], KubeError> {
-    let params =
-        Params::new(64 * 1024, 3, 1, Some(KEY_LEN)).map_err(|e| KubeError::Kdf(e.to_string()))?;
-    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; KEY_LEN];
-    argon
-        .hash_password_into(passphrase, salt, &mut key)
-        .map_err(|e| KubeError::Kdf(e.to_string()))?;
-    Ok(key)
+fn write_atomic(path: &Path, data: &[u8]) -> Result<(), KubeError> {
+    Ok(crypto::write_private_atomic(path, data)?)
 }
 
-fn write_atomic(path: &Path, data: &[u8]) -> Result<(), KubeError> {
-    let tmp = path.with_extension("tmp");
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+impl From<CryptoError> for KubeError {
+    fn from(e: CryptoError) -> Self {
+        match e {
+            CryptoError::BadFormat(m) => KubeError::BadFormat(m),
+            CryptoError::Decrypt => KubeError::Decrypt,
+            CryptoError::Kdf(m) => KubeError::Kdf(m),
         }
     }
-    {
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perm = fs::Permissions::from_mode(0o600);
-        let _ = fs::set_permissions(&tmp, perm);
-    }
-    fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 /// Add a kubeconfig. `passphrase = None` stores plaintext (`.yaml`).
@@ -273,68 +241,11 @@ pub fn add(
 }
 
 fn encrypt_blob(name: &str, plaintext: &[u8], passphrase: &str) -> Result<Vec<u8>, KubeError> {
-    let mut salt = [0u8; SALT_LEN];
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    rand::thread_rng().fill_bytes(&mut salt);
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-
-    let mut key = derive_key(passphrase.as_bytes(), &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| KubeError::Decrypt)?;
-    key.zeroize();
-
-    let mut aad = Vec::with_capacity(MAGIC.len() + 1 + name.len());
-    aad.extend_from_slice(MAGIC);
-    aad.push(VERSION);
-    aad.extend_from_slice(name.as_bytes());
-
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(
-            nonce,
-            Payload {
-                msg: plaintext,
-                aad: &aad,
-            },
-        )
-        .map_err(|_| KubeError::Decrypt)?;
-
-    let mut buf = Vec::with_capacity(4 + 1 + SALT_LEN + NONCE_LEN + ciphertext.len());
-    buf.extend_from_slice(MAGIC);
-    buf.push(VERSION);
-    buf.extend_from_slice(&salt);
-    buf.extend_from_slice(&nonce_bytes);
-    buf.extend_from_slice(&ciphertext);
-    Ok(buf)
+    Ok(crypto::seal(MAGIC, VERSION, name.as_bytes(), plaintext, passphrase)?)
 }
 
 fn decrypt_blob(name: &str, raw: &[u8], passphrase: &str) -> Result<Vec<u8>, KubeError> {
-    let min = 4 + 1 + SALT_LEN + NONCE_LEN + 16;
-    if raw.len() < min {
-        return Err(KubeError::BadFormat("file too small"));
-    }
-    if &raw[0..4] != MAGIC {
-        return Err(KubeError::BadFormat("bad magic"));
-    }
-    if raw[4] != VERSION {
-        return Err(KubeError::BadFormat("unsupported version"));
-    }
-    let salt = &raw[5..5 + SALT_LEN];
-    let nonce_bytes = &raw[5 + SALT_LEN..5 + SALT_LEN + NONCE_LEN];
-    let ct = &raw[5 + SALT_LEN + NONCE_LEN..];
-
-    let mut key = derive_key(passphrase.as_bytes(), salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| KubeError::Decrypt)?;
-    key.zeroize();
-
-    let mut aad = Vec::with_capacity(MAGIC.len() + 1 + name.len());
-    aad.extend_from_slice(MAGIC);
-    aad.push(VERSION);
-    aad.extend_from_slice(name.as_bytes());
-
-    let nonce = Nonce::from_slice(nonce_bytes);
-    cipher
-        .decrypt(nonce, Payload { msg: ct, aad: &aad })
-        .map_err(|_| KubeError::Decrypt)
+    Ok(crypto::open(MAGIC, VERSION, name.as_bytes(), raw, passphrase)?)
 }
 
 fn collect_entries(
